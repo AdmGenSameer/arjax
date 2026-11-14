@@ -6,7 +6,7 @@ from arjax.interfaces.tui import ArjaxTUIApp
 
 def test_provider_engine_info_dependencies(monkeypatch):
     engine = GoProviderEngine()
-    
+
     mock_response = {
         "name": "firefox",
         "version": "120.0-1",
@@ -14,7 +14,7 @@ def test_provider_engine_info_dependencies(monkeypatch):
         "dependencies": ["glibc", "gcc-libs", "libpng"],
         "provider": "repository"
     }
-    
+
     monkeypatch.setattr(engine, "_run", lambda cmd: mock_response)
     info = engine.info("firefox")
     assert info["name"] == "firefox"
@@ -24,7 +24,7 @@ def test_provider_engine_info_dependencies(monkeypatch):
 @pytest.mark.asyncio
 async def test_tui_dep_tree_update():
     app = ArjaxTUIApp(engine=MagicMock())
-    async with app.run_test() as pilot:
+    async with app.run_test():
         app.selected_pkg = {"name": "testpkg", "version": "1.0.0"}
         info = {
             "name": "testpkg",

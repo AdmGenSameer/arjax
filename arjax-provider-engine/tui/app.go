@@ -34,26 +34,26 @@ type infoDoneMsg struct {
 }
 
 type Model struct {
-	pm          *providers.ProviderManager
-	distro      string
-	textInput   textinput.Model
-	spinner     spinner.Model
-	loading     bool
-	statusMsg   string
-	packages    []models.Package
-	pkgInfo     map[string]models.PackageInfo
-	cursor      int
-	width       int
-	height      int
-	activeTab   int // 0: search, 1: details, 2: activity
-	logLines    []string
-	installing  bool
-	err         error
+	pm         *providers.ProviderManager
+	distro     string
+	textInput  textinput.Model
+	spinner    spinner.Model
+	loading    bool
+	statusMsg  string
+	packages   []models.Package
+	pkgInfo    map[string]models.PackageInfo
+	cursor     int
+	width      int
+	height     int
+	activeTab  int // 0: search, 1: details, 2: activity
+	logLines   []string
+	installing bool
+	err        error
 }
 
 func NewModel(pm *providers.ProviderManager) Model {
 	ti := textinput.New()
-	ti.Placeholder = "Type package name to search (e.g. firefox, neovim, git)..."
+	ti.Placeholder = "Search packages (e.g. zapfast, firefox) — Press Enter to search..."
 	ti.Focus()
 	ti.CharLimit = 156
 	ti.Width = 40
@@ -280,9 +280,9 @@ func (m Model) View() string {
 			provBadge := lipgloss.NewStyle().Foreground(ColorAccent).Render(fmt.Sprintf("[%s]", pkg.Provider))
 			line := fmt.Sprintf("%-24s %s %s", pkg.Name, provBadge, pkg.Version)
 			if i == m.cursor {
-				listContent.WriteString(ListItemSelectedStyle.Render("▶ " + line) + "\n")
+				listContent.WriteString(ListItemSelectedStyle.Render("▶ "+line) + "\n")
 			} else {
-				listContent.WriteString(ListItemStyle.Render("  " + line) + "\n")
+				listContent.WriteString(ListItemStyle.Render("  "+line) + "\n")
 			}
 		}
 	}
