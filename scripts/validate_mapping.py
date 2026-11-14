@@ -87,8 +87,10 @@ def validate_mapping_file(file_path: str) -> bool:
 
 def main():
     """Main validation function."""
-    script_dir = Path(__file__).parent
-    mapping_file = script_dir / "data" / "purpose_mapping.yaml"
+    root_dir = Path(__file__).resolve().parent.parent
+    mapping_file = root_dir / "data" / "purpose_mapping.yaml"
+    if not mapping_file.exists():
+        mapping_file = Path("data/purpose_mapping.yaml")
     
     print(f"Validating {mapping_file}")
     print("=" * 50)
