@@ -105,9 +105,10 @@ class RecipeStore:
                 name=str(raw_data.get("name") or path.stem),
                 display_name=raw_data.get("display_name"),
                 description=str(raw_data.get("description") or ""),
+                version=str(raw_data.get("version") or "1.0.0"),
                 aliases=list(raw_data.get("aliases") or []),
                 providers=providers,
-                metadata={k: v for k, v in raw_data.items() if k not in {"name", "display_name", "description", "aliases", "providers"}},
+                metadata={k: v for k, v in raw_data.items() if k not in {"name", "display_name", "description", "version", "aliases", "providers"}},
             )
         except Exception as exc:
             logger.warning("Failed to load recipe %s: %s", path, exc)

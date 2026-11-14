@@ -1,0 +1,16 @@
+name: zapfast
+display_name: ZapFast
+description: Fast native WhatsApp client built with Rust and egui
+aliases:
+  - zapfast
+  - whatsapp
+providers:
+  repository:
+    package: zapfast
+    package_manager: paru
+  github:
+    github_repo: crmne/zapfast
+  appimage:
+    appimage_url: https://github.com/crmne/zapfast/releases/download/v0.21.1/zapfast-0.21.1-x86_64.AppImage
+    appimage_name: zapfast
+

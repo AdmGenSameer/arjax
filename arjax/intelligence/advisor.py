@@ -108,6 +108,7 @@ def apply_user_mode_defaults(mode: str) -> Dict[str, Any]:
     if mode == 'advanced':
         return {
             'user_mode': 'advanced',
+            'default_interface': 'tui',
             'auto_update_enabled': False,
             'auto_update_mode': 'manual',
             'update_check_interval_hours': 24,
@@ -122,6 +123,7 @@ def apply_user_mode_defaults(mode: str) -> Dict[str, Any]:
     # normal (recommended)
     return {
         'user_mode': 'normal',
+        'default_interface': 'tui',
         'auto_update_enabled': True,
         'auto_update_mode': 'automatic',
         'update_check_interval_hours': 24,

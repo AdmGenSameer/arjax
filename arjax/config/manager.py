@@ -17,6 +17,7 @@ class UserConfig:
     """User configuration settings"""
     user_mode: str = "normal"  # "normal" or "advanced"
     theme_mode: str = "system"  # "system", "light", or "dark"
+    default_interface: str = "tui"  # "tui" or "cli"
     auto_update_enabled: bool = False
     auto_update_mode: str = "manual"  # "automatic" or "manual"
     update_check_interval_hours: int = 24
@@ -111,6 +112,7 @@ class ConfigManager:
             "Current settings:",
             f"  User mode: {config.user_mode}",
             f"  Theme mode: {config.theme_mode}",
+            f"  Default interface: {config.default_interface}",
             f"  Auto-update enabled: {config.auto_update_enabled}",
             f"  Auto-update mode: {config.auto_update_mode}",
             f"  Update check interval: {config.update_check_interval_hours} hours",

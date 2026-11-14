@@ -78,9 +78,17 @@ Arjax works across Linux distributions. It detects your system automatically and
 ## Quick Start
 
 ```sh
+# Clone & install
 git clone https://github.com/AdmGenSameer/arjax.git
 cd arjax
 bash install.sh
+
+# Launch interactive TUI (Default)
+arjax
+
+# Or use CLI commands directly
+arjax search firefox
+arjax install firefox
 ```
 
 Or directly from the web:
@@ -268,6 +276,35 @@ arjax gui                      # launch the desktop GUI
 arjax update                   # install all tracked updates
 arjax update --check-only      # check without installing
 
+# Interactive TUI Mode
+arjax tui                      # launch Ratatui-style interactive terminal interface
+                               # Hotkeys: [d] Deps [h] History [o] Orphans [s] Stats [u] Sync Recipes
+
+# Parallel Package Installation
+arjax install pkg1 pkg2 pkg3   # Install multiple packages concurrently with progress bars
+
+# Declarative Recipe Auto-Update & Sync
+arjax recipes list             # View local vs upstream recipe versions
+arjax recipes sync             # Auto-pull recipe updates from central registry
+
+# Transaction History & Rollback
+arjax history list             # Inspect past install/remove transactions with timings
+arjax history rollback <tx_id> # Rollback previous state transaction
+
+# DAG-Based Orphan Cleanup
+arjax cleanup orphans          # Scan and remove unused orphan packages via DAG analysis
+arjax cleanup orphans --dry-run # Preview orphans without removing
+
+# System Statistics & Diagnostics Dashboard
+arjax stats                    # View disk usage, package counts, updates & health alerts
+
+# Shell Autocompletion
+arjax completion install bash  # Install autocompletions for bash, zsh, or fish
+arjax completion show zsh      # Print autocompletion script
+
+# Man Page
+man arjax                      # View official troff manual page
+
 # Configuration
 arjax config --list
 arjax config auto_update_enabled true
@@ -281,7 +318,6 @@ arjax service status
 arjax list-installed
 
 # Arch maintenance
-arjax cleanup orphans
 arjax cleanup cache
 arjax snapshot create --comment "Before update"
 arjax snapshot list
@@ -407,7 +443,8 @@ arjax/
 ├── recipes/
 │   ├── brave.yaml
 │   ├── docker.yaml
-│   └── vscode.yaml
+│   ├── vscode.yaml
+│   └── zapfast.yaml
 │
 └── system/
     └── monitor.py       # Background monitoring service

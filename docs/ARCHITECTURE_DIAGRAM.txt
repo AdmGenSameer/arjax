@@ -1,293 +1,116 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                   ARCHPKG HELPER - WEB GUI FIXES & FEATURES                  ║
+║                   ARJAX - SYSTEM ARCHITECTURE & ENGINE TOPOLOGY             ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ ISSUE #1: SEARCH ALWAYS RETURNS "NOT FOUND"                                  │
+│ USER INTERACTION TIERS                                                        │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                               │
-│ BEFORE:                              AFTER:                                  │
-│ ═══════════════════════════════      ═══════════════════════════════         │
-│ User searches "firefox"              Detect: Ubuntu detected                 │
-│         ↓                            Query ONLY: APT                        │
-│ Try Pacman (fail)  ✗                      ↓                                  │
-│ Try AUR (fail)     ✗                 Results found! ✓                       │
-│ Try APT (fail)     ✗    ──────→      From APT package manager               │
-│ Try DNF (fail)     ✗                      ↓                                  │
-│ Try Flatpak (ok)                     Display with Install button             │
-│ Try Snap (ok)                                                                │
-│         ↓                            System knows what's available!           │
-│ "Not found"  ✗                                                               │
+│  1. CLI (Command-Line)       2. TUI (Terminal UI)       3. GUI (Desktop)     │
+│  ─────────────────────       ───────────────────        ────────────────     │
+│   arjax search <pkg>          arjax tui                  arjax gui           │
+│   arjax install <pkg>         (Bubble Tea / Textual)     (PyQt5 Desktop)     │
+│   arjax remove <pkg>          Dual-Pane Explorer         Multi-Tab GUI       │
 │                                                                               │
-└──────────────────────────────────────────────────────────────────────────────┘
-
+└───────────────────────┬──────────────────┬─────────────────┬─────────────────┘
+                        │                  │                 │
+                        ▼                  ▼                 ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ ISSUE #2: GITHUB REDIRECT INSTEAD OF AUTO-INSTALL                            │
+│ PYTHON CLIENT / ORCHESTRATION LAYER (`arjax`)                                │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                               │
-│ BEFORE:                              AFTER:                                  │
-│ ═══════════════════════════════      ═══════════════════════════════         │
-│ Package not found in repos           Package not found in repos              │
-│         ↓                                    ↓                               │
-│ User redirected to GitHub            Auto search GitHub API                 │
-│         ↓                                    ↓                               │
-│ Manual clone needed                   Show results with stars                │
-│         ↓                                    ↓                               │
-│ Read build instructions              User clicks "Install from Source"      │
-│         ↓                                    ↓                               │
-│ Manual build/install                 Auto-detect project type:              │
-│         ↓                             • Python → pip install .               │
-│ No tracking              ──────→      • Node → npm/yarn install              │
-│                                       • CMake → cmake/make                   │
-│                                       • Go → go build                        │
-│                                       • Rust → cargo build                   │
-│                                              ↓                               │
-│                                         Installation done ✓                 │
-│                                         Tracked in system ✓                 │
+│  • GoProviderEngine Bridge (subprocess JSON IPC with fallback check)          │
+│  • Recipe Store (YAML declarative specifications)                            │
+│  • Intelligent Advisor & Archeology (AUR trust scores, Arch news, snapshot)  │
+│  • Configuration Manager (`~/.arjax/config.toml` & `config.json`)            │
 │                                                                               │
-└──────────────────────────────────────────────────────────────────────────────┘
-
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       │
+                ┌──────────────────────┴──────────────────────┐
+                │                                             │
+      [Go Engine Available]                         [Fallback Path]
+                │                                             │
+                ▼                                             ▼
+┌─────────────────────────────────────────┐     ┌──────────────────────────────┐
+│ HIGH-PERFORMANCE GO ENGINE              │     │ LEGACY PYTHON PROVIDERS      │
+│ (`arjax-provider-engine`)               │     │ (`arjax.search.*`)           │
+├─────────────────────────────────────────┤     ├──────────────────────────────┤
+│                                         │     │                              │
+│ ┌─────────────────────────────────────┐ │     │ • Pacman / Paru searches     │
+│ │  Concurrent Provider Orchestrator   │ │     │ • Direct AUR HTTP scraper    │
+│ │  (goroutine parallel queries)       │ │     │ • Apt / Dnf / Zypper subproc │
+│ └──────┬───────────────────────┬──────┘ │     │ • Flatpak / Snap parsers     │
+│        │                       │        │     │                              │
+│        ▼                       ▼        │     └──────────────────────────────┘
+│ ┌──────────────┐       ┌──────────────┐ │
+│ │ Memory/Disk  │       │ Rate Limiter │ │
+│ │ Cache (TTL)  │       │ & Semaphores │ │
+│ └──────────────┘       └──────────────┘ │
+│                                         │
+│ Integrated Providers:                   │
+│   ├── Repository (pacman, apt, dnf,     │
+│   │               zypper auto-detect)   │
+│   ├── AUR (RPC v5 + makepkg/paru)       │
+│   ├── Flatpak (flathub + CLI)           │
+│   ├── Snap (snapd + store)              │
+│   ├── GitHub Releases (AppImage/bin)    │
+│   └── Vendor (custom recipe commands)   │
+│                                         │
+│ JSON Output / Interactive TUI (BubbleTea)│
+└─────────────────────────────────────────┘
+                                       │
+                                       ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ ISSUE #3: NO INSTALLATION TRACKING                                           │
+│ HOST SYSTEM & PACKAGE MANAGERS                                               │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                               │
-│ BEFORE:                              AFTER:                                  │
-│ ═══════════════════════════════      ═══════════════════════════════         │
-│ Search → Install?                    Search → Find package                   │
-│ No way to track                             ↓                               │
-│ No management                        Click "Install" button                  │
-│ No updates                                  ↓                               │
-│ Manual everything            ────→  Tracked in ~/.archpkg/installed.json   │
-│                                             ↓                               │
-│                                     Visit /installed page                    │
-│                                             ↓                               │
-│                                     See all packages ever tracked            │
-│                                             ↓                               │
-│                                     Check for updates                        │
-│                                             ↓                               │
-│                                     Automatic management!                    │
-│                                                                               │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                              SYSTEM ARCHITECTURE                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-User Browser                Flask Web Server              System
-═════════════════════════════════════════════════════════════════════════════
-
-Search "firefox"
-   ↓
-┌──────────────────┐         ┌─────────────────────────────────────────────┐
-│ /search page     │────────→│ GET /api/search?q=firefox                   │
-└──────────────────┘         │                                             │
-                              │ 1. Detect distro (distro.id())             │
-                              │ 2. Query appropriate managers only         │
-                              │    (APT if Ubuntu, Pacman if Arch, etc)   │
-                              │ 3. Score & sort by relevance              │
-                              │ 4. Return JSON with results               │
-                              │                                             │
-Display Results                │ Results: [{name, desc, manager,           │
-   ↓                           │           command, source_url}]           │
-┌──────────────────┐           └─────────────────────────────────────────────┘
-│ Install button   │────────→┌─────────────────────────────────────────────┐
-└──────────────────┘         │ POST /api/install                           │
-                              │ {name: "firefox", manager: "apt"}           │
-   ↓                          │                                             │
-┌──────────────────┐         │ 1. Generate install command                │
-│ Show "Tracked!" │←─────────│ 2. Create InstalledPackage object          │
-└──────────────────┘         │ 3. Save to ~/.archpkg/installed.json       │
-                              │ 4. Return success                          │
-   ↓                          └─────────────────────────────────────────────┘
-Click "My Packages"
-   ↓
-┌──────────────────┐         ┌─────────────────────────────────────────────┐
-│ /installed page  │────────→│ GET /api/installed-packages                 │
-└──────────────────┘         │                                             │
-                              │ Read ~/.archpkg/installed.json             │
-Display All Packages           │ Return list of all tracked packages       │
-   ↓                           └─────────────────────────────────────────────┘
-┌──────────────────────────┐
-│ • firefox (APT)          │
-│   Installed: Jan 15      │
-│   [Remove] [Check Update]│
-│                          │
-│ • vscode (GitHub)        │
-│   Installed: Jan 14      │
-│   [Remove] [Check Update]│
-│                          │
-│ • python-requests (APT)  │
-│   Installed: Jan 10      │
-│   [Remove] [Check Update]│
-└──────────────────────────┘
-
-
-GitHub Fallback Flow
-════════════════════════════════════════════════════════════════════════════
-
-Search "obscure-tool"
-   ↓
-Not found in repos
-   ↓
-┌──────────────────┐         ┌─────────────────────────────────────────────┐
-│ Auto-search      │────────→│ GET /api/github-search?q=obscure-tool       │
-│ GitHub           │         │                                             │
-└──────────────────┘         │ Query GitHub API                            │
-   ↓                          │ Return top 10 starred repos                │
-Display GitHub Results        │                                             │
-┌──────────────────────────┐  └─────────────────────────────────────────────┘
-│ • obscure-tool           │
-│   ⭐ 1,234 stars        │
-│   Language: Python       │
-│ [Install from Source]    │
-│                          │
-│ • obscure-tools          │
-│   ⭐ 456 stars         │
-│   Language: Go           │
-│ [Install from Source]    │
-└──────────────────────────┘
-   ↓
-Click "Install from Source"
-   ↓
-┌──────────────────┐         ┌─────────────────────────────────────────────┐
-│ Processing...    │────────→│ POST /api/github-install                    │
-│                  │         │ {url: "https://github.com/.../repo"}        │
-└──────────────────┘         │                                             │
-   ↓                          │ 1. Validate GitHub URL                     │
-┌──────────────────┐         │ 2. Clone repository                        │
-│ Installation     │←────────│ 3. Detect project type                     │
-│ Complete! ✓      │         │ 4. Install dependencies                    │
-└──────────────────┘         │ 5. Build project (if needed)               │
-   ↓                          │ 6. Install globally                        │
-Package Tracked              │ 7. Track in installed.json                 │
-in "My Packages"             │                                             │
-                              └─────────────────────────────────────────────┘
-
-
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                            DISTRO-AWARE SEARCH                               ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-┌─────────────┐
-│ Detect OS   │ → distro.id() returns: "ubuntu", "arch", "fedora", etc.
-└──────┬──────┘
-       │
-       ├─→ Arch/Manjaro
-       │   └──→ Pacman → AUR → Flatpak → Snap
-       │
-       ├─→ Debian/Ubuntu
-       │   └──→ APT → Flatpak → Snap
-       │
-       ├─→ Fedora/RHEL
-       │   └──→ DNF → Flatpak → Snap
-       │
-       ├─→ openSUSE
-       │   └──→ Zypper → Flatpak → Snap
-       │
-       └─→ Other / Unknown
-           └──→ Flatpak → Snap → GitHub
-
-
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                           DATA PERSISTENCE                                   ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-Location: ~/.archpkg/installed.json
-
-Example Content:
-────────────────
-
-{
-  "firefox": {
-    "name": "firefox",
-    "version": "120.0",
-    "source": "apt",
-    "install_date": "2025-01-15T10:30:00+00:00",
-    "install_method": "web",
-    "update_available": false
-  },
-  "my-python-app": {
-    "name": "my-python-app",
-    "source": "GitHub",
-    "install_date": "2025-01-15T11:00:00+00:00",
-    "install_method": "github"
-  }
-}
-
-Persistence Benefits:
-  ✓ Survives web server restarts
-  ✓ Survives system reboots
-  ✓ Used by /installed page
-  ✓ Used by update checking
-  ✓ Can be backed up
-
-
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                          NEW FUNCTIONALITY                                   ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ WEB INTERFACE IMPROVEMENTS                                                    │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                               │
-│ 1. Search Results Page (/search)                                             │
-│    ├─ Search input (auto-focus)                                              │
-│    ├─ Results with Package Manager badge                                    │
-│    ├─ Green "Install" button on each result                                 │
-│    ├─ Copy command button                                                    │
-│    ├─ Auto GitHub fallback if nothing found                                 │
-│    └─ GitHub results with stars and language info                           │
-│                                                                               │
-│ 2. My Packages Page (/installed)                                             │
-│    ├─ List of all tracked packages                                           │
-│    ├─ Installation date/time                                                │
-│    ├─ Source package manager identification                                 │
-│    ├─ Update status indicator                                               │
-│    ├─ Refresh button                                                         │
-│    ├─ Check for updates button                                              │
-│    └─ Remove from tracking button                                           │
-│                                                                               │
-│ 3. API Endpoints                                                             │
-│    ├─ GET /api/search (improved with distro detection)                      │
-│    ├─ POST /api/install (track package)                                     │
-│    ├─ GET /api/github-search (search GitHub)                                │
-│    ├─ POST /api/github-install (auto-build & install)                       │
-│    ├─ GET /api/installed-packages (list tracked)                            │
-│    └─ POST /api/check-updates (check for updates)                           │
-│                                                                               │
+│  Arch (pacman/paru) │ Debian/Ubuntu (apt) │ Fedora (dnf) │ openSUSE (zypper) │
+│  Flathub (flatpak)  │ Snap Store (snapd)  │ GitHub / Binaries (~/.local/bin) │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                            FILES CHANGED                                     ║
+║                          EXECUTION & DATA FLOW                               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
-MODIFIED:
-  ✓ archpkg/web.py                     (301 lines) - Main server with new endpoints
-  ✓ archpkg/templates/search.html       (updated) - Added Install button + GitHub UI
+1. SEARCH FLOW:
+═══════════════
+ User Input (CLI / TUI / GUI)
+    ↓
+ [GoProviderEngine.search(query)]
+    ↓
+ Go Engine runs concurrent goroutines for each active provider:
+    ├─→ [Repository] (pacman/apt/dnf/zypper)
+    ├─→ [AUR] (aur.archlinux.org RPC API v5)
+    ├─→ [Flatpak] (flathub)
+    ├─→ [Snap] (snapcraft)
+    └─→ [GitHub] (github releases API)
+    ↓
+ Aggregate & deduplicate in memory, save to `~/.cache/arjax/provider_cache.json`
+    ↓
+ Stream formatted results to GUI / TUI / CLI in < 300ms.
 
-CREATED:
-  ✓ archpkg/templates/installed.html    (new page) - Package management interface
-  ✓ WEB_IMPROVEMENTS_SUMMARY.md          (docs) - Full feature documentation
-  ✓ QUICK_REFERENCE.md                  (docs) - Quick reference guide
-  ✓ CHANGES_SUMMARY.txt                 (docs) - Complete change summary
-  ✓ test_web_implementation.py          (script) - Verification & testing
+
+2. INSTALLATION FLOW:
+═════════════════════
+ User clicks "Install" / `arjax install <pkg>`
+    ↓
+ Evaluate Recipe / Provider Priority Chain:
+    Repository (Pacman/APT/DNF/Zypper) → AUR (if Arch) → Vendor → Flatpak → Snap → GitHub
+    ↓
+ Step-based execution with live progress output:
+    1. Resolve dependencies
+    2. Download binary/source or build PKGBUILD
+    3. Run installer with sudo elevation where needed
+    4. Link binaries to `~/.local/bin/`
+    ↓
+ Track package installation state in `~/.arjax/installed.json`
+    ↓
+ Display live status updates in GUI and TUI.
 
 
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                         IMPLEMENTATION STATUS                                ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-✓ Fix web search issues                 COMPLETE
-✓ Add install button to web UI          COMPLETE
-✓ Add manage installed apps feature     COMPLETE
-✓ Implement GitHub source fallback      COMPLETE
-✓ Add API endpoints for installation    COMPLETE
-✓ Package tracking system               COMPLETE
-✓ Distro detection                      COMPLETE
-✓ GitHub auto-build support             COMPLETE
-✓ Documentation                         COMPLETE
-✓ Testing/verification                  COMPLETE
-
-STATUS: ✓✓✓ READY TO USE ✓✓✓
+3. GRACEFUL FALLBACK (NO GO COMPILER):
+══════════════════════════════════════
+ If user environment does not have Go or `arjax-provider` binary:
+    • `GoProviderEngine.is_available()` returns `False`
+    • GUI & CLI seamlessly fall back to Python search and installer modules
+    • Zero crashes, zero external runtime hard dependencies required

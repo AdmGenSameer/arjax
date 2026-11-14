@@ -134,6 +134,29 @@ install_git_package() {
     esac
 }
 
+install_go_package() {
+    local family="$1"
+    init_sudo
+    case "$family" in
+        arch)
+            $SUDO pacman -Sy --noconfirm go >/dev/null 2>&1
+            ;;
+        debian)
+            $SUDO apt-get update -y >/dev/null 2>&1 || true
+            $SUDO apt-get install -y golang-go >/dev/null 2>&1
+            ;;
+        fedora)
+            $SUDO dnf install -y golang >/dev/null 2>&1
+            ;;
+        suse)
+            $SUDO zypper install -y go >/dev/null 2>&1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 show_spinner() {
     local pid=$1
     local message="$2"
@@ -332,6 +355,50 @@ ensure_git() {
     request_dep_install "git" "$display_cmds" "install_git_package $distro_family" "Arjax requires git to download/update recipes."
 }
 
+ensure_go() {
+    if command -v go >/dev/null 2>&1; then
+        log "Go toolchain is already installed ($(go version | awk '{print $3}'))"
+        return 0
+    fi
+
+    local distro_family
+    distro_family="$(detect_distro_family)"
+    
+    local display_cmds=""
+    case "$distro_family" in
+        arch) display_cmds="sudo pacman -S go" ;;
+        debian) display_cmds="sudo apt update\n    sudo apt install -y golang-go" ;;
+        fedora) display_cmds="sudo dnf install -y golang" ;;
+        suse) display_cmds="sudo zypper install -y go" ;;
+        *) display_cmds="Install Go using your package manager" ;;
+    esac
+
+    log "Checking for Go compiler to build high-performance Arjax Provider Engine..."
+    if [ "$INSTALL_DEPS" = true ] || [ "$YES_TO_ALL" = true ]; then
+        request_dep_install "Go compiler" "$display_cmds" "install_go_package $distro_family" "Arjax Provider Engine is built in Go for maximum speed and concurrency."
+    else
+        echo ""
+        echo "Go compiler was not detected on this system."
+        echo "Arjax includes a Go Provider Engine binary for ultra-fast parallel searches and TUI."
+        echo "Detected OS: $(get_os_info)"
+        echo ""
+        if [ -c /dev/tty ]; then
+            read -r -p "Install Go automatically to compile provider engine? [Y/n]: " choice < /dev/tty
+        else
+            read -r -p "Install Go automatically to compile provider engine? [Y/n]: " choice
+        fi
+        case "$choice" in
+            [nN]|[nN][oO])
+                log "Skipping Go installation. Arjax will use Python fallback providers."
+                return 0
+                ;;
+            *)
+                request_dep_install "Go compiler" "$display_cmds" "install_go_package $distro_family" "Arjax Provider Engine is built in Go."
+                ;;
+        esac
+    fi
+}
+
 ensure_python() {
     if command -v python3 >/dev/null 2>&1; then
         if ! check_python_version; then
@@ -413,7 +480,8 @@ ensure_pipx() {
         return 0
     fi
 
-    die "pipx installation completed but the command is still not available in PATH."
+    log "pipx not present; continuing with isolated virtual environment setup in $VENV_DIR"
+    return 0
 }
 
 ensure_source() {
@@ -466,6 +534,30 @@ install_package() {
 
     log "Installing GUI dependency..."
     "$pip_bin" install --upgrade PyQt5
+}
+
+build_go_engine() {
+    local engine_dir="$SCRIPT_DIR/arjax-provider-engine"
+    if [ ! -d "$engine_dir" ]; then
+        if [ -d "$INSTALL_ROOT/arjax-provider-engine" ]; then
+            engine_dir="$INSTALL_ROOT/arjax-provider-engine"
+        fi
+    fi
+
+    if [ -d "$engine_dir" ] && command -v go >/dev/null 2>&1; then
+        log "Compiling Arjax Go Provider Engine..."
+        (
+            cd "$engine_dir"
+            go build -o "$BIN_DIR/arjax-provider" main.go || true
+        )
+        if [ -x "$BIN_DIR/arjax-provider" ]; then
+            log "Arjax Go Provider Engine successfully compiled and installed to $BIN_DIR/arjax-provider"
+        else
+            log "Go compilation failed. Arjax will seamlessly run using built-in Python providers."
+        fi
+    else
+        log "Go compiler or engine source not present. Arjax will use Python fallback provider system."
+    fi
 }
 
 # Add a small launcher so the app is easy to start from the terminal.
@@ -609,6 +701,16 @@ EOF
     log "Desktop launcher installed and should appear in the application menu"
 }
 
+install_man_page() {
+    log "Installing man page..."
+    local MAN_DIR="$HOME/.local/share/man/man1"
+    mkdir -p "$MAN_DIR"
+    if [ -f "$SCRIPT_DIR/data/man/man1/arjax.1" ]; then
+        cp "$SCRIPT_DIR/data/man/man1/arjax.1" "$MAN_DIR/arjax.1"
+        log "Man page installed to $MAN_DIR/arjax.1 (view with: man arjax)"
+    fi
+}
+
 # Preserve the Arch-only profile setup, but keep it out of the universal path for other distros.
 configure_arch_profile() {
     local distro_family="$1"
@@ -642,6 +744,7 @@ configure_arch_profile() {
         cat > "$HOME/.arjax/config.json" <<EOF
 {
   "user_mode": "advanced",
+  "default_interface": "tui",
   "auto_update_enabled": false,
   "auto_update_mode": "manual",
   "update_check_interval_hours": 24,
@@ -657,6 +760,7 @@ EOF
         cat > "$HOME/.arjax/config.json" <<EOF
 {
   "user_mode": "normal",
+  "default_interface": "tui",
   "auto_update_enabled": true,
   "auto_update_mode": "automatic",
   "update_check_interval_hours": 24,
@@ -682,21 +786,25 @@ main() {
 
     ensure_python
     ensure_git
-    ensure_pipx
+    ensure_go
     ensure_source
     create_venv
     install_package
+    build_go_engine
     create_launcher
     ensure_shell_path
     install_desktop_entry
+    install_man_page
     configure_arch_profile "$(detect_distro_family)"
 
     log "Arjax installation complete!"
     echo ""
     echo "Quick start:"
-    echo "    arjax --help        # Show all CLI commands"
-    echo "    arjax gui           # Launch native desktop GUI"
+    echo "    arjax               # Launch interactive TUI (Default)"
     echo "    arjax search <pkg>  # Search for packages"
+    echo "    arjax install <pkg> # Install packages"
+    echo "    arjax gui           # Launch native desktop GUI"
+    echo "    arjax --help        # Show all CLI commands"
     echo ""
     echo "Your shell startup files were updated so ~/.local/bin is available in new sessions."
     echo ""
@@ -708,3 +816,4 @@ main() {
 }
 
 main "$@"
+

@@ -28,16 +28,16 @@ class PackageHelperLogger:
     def _get_log_directory(self) -> Path:
         """Get the appropriate log directory for the current platform."""
         if sys.platform == 'win32':
-            # Windows: Use AppData/Local
             base_dir = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local'))
-            return base_dir / 'arjax'
+            return base_dir / 'arjax' / 'logs'
         else:
-            # Linux/macOS: Use XDG standard
-            xdg_data_home = os.environ.get('XDG_DATA_HOME')
-            if xdg_data_home:
-                return Path(xdg_data_home) / 'arjax'
-            else:
-                return Path.home() / '.local' / 'share' / 'arjax'
+            log_dir = Path.home() / '.arjax' / 'logs'
+            cache_log_dir = Path.home() / '.cache' / 'arjax' / 'logs'
+            try:
+                cache_log_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            return log_dir
     
     def _setup_console_only_logging(self) -> None:
         """Fallback to console-only logging if file logging fails."""

@@ -10,7 +10,7 @@ import webbrowser
 import threading
 import time
 import shutil
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any, Dict
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -745,23 +745,33 @@ Universal package discovery and installation for Linux.
 Search once. Install from the best available source.
 
 [bold yellow]🚀 Quick Start[/bold yellow]
+    [cyan]arjax[/cyan]               [green]Launch interactive TUI (Default)[/green]
     [cyan]arjax search firefox[/cyan]
     [cyan]arjax install firefox[/cyan]
+    [cyan]arjax tui[/cyan]              Launch interactive Ratatui-style TUI
+    [cyan]arjax gui[/cyan]              Launch desktop GUI
     [cyan]arjax suggest coding[/cyan]
 
 [bold yellow]💻 Commands[/bold yellow]
     [cyan]search[/cyan]           Search for software
-    [cyan]install[/cyan]          Install software
+    [cyan]install[/cyan]          Install one or multiple packages concurrently
+    [cyan]tui[/cyan]              Launch interactive Ratatui-style TUI
+    [cyan]gui[/cyan]              Launch desktop GUI
+    [cyan]recipes[/cyan]          Manage and auto-sync package recipes
+    [cyan]history[/cyan]          Inspect transaction log and rollback changes
+    [cyan]cleanup[/cyan]          DAG-based orphan scanner & package cache cleanup
+    [cyan]stats[/cyan]            System Statistics & Diagnostics Dashboard
+    [cyan]completion[/cyan]       Install shell autocompletions (bash, zsh, fish)
     [cyan]suggest[/cyan]          Discover apps by purpose
     [cyan]update[/cyan]           Update tracked packages
     [cyan]list-installed[/cyan]   Show installed packages
-    [cyan]web[/cyan]              Launch web interface
     [cyan]upgrade[/cyan]          Upgrade Arjax
     [cyan]uninstall[/cyan]        Remove Arjax
 
 [bold yellow]⚙️  Advanced Commands[/bold yellow]
     [cyan]config[/cyan]           Manage configuration
-    [cyan]service[/cyan]          Background service
+    [cyan]service[/cyan]          Background update service
+    [cyan]snapshot[/cyan]         Manage system snapshots (Btrfs / Timeshift)
 
 [bold yellow]🔍 Search[/bold yellow]
     Search only. No system modifications are performed.
@@ -778,14 +788,14 @@ Search once. Install from the best available source.
     [cyan]--limit, -l[/cyan]        Maximum results to show (default: 5)
 
 [bold yellow]📦 Install[/bold yellow]
-    Installs packages using the configured provider.
+    Installs single or multiple packages concurrently using the configured provider.
 
-    [cyan]arjax install <package-name>[/cyan]
+    [cyan]arjax install <package-name...>[/cyan]
     [cyan]arjax install <package-name> --provider <name>[/cyan]
 
     Examples:
     [green]🔸 arjax install vscode[/green]
-    [green]🔸 arjax install docker[/green]
+    [green]🔸 arjax install htop neovim curl[/green]
 
 [bold yellow]🔌 Provider Order[/bold yellow]
     1. [green]repository[/green]   Native package manager (pacman, apt, dnf, zypper)
@@ -797,21 +807,35 @@ Search once. Install from the best available source.
 
     Arjax automatically chooses the first supported and available provider.
 
+[bold yellow]🖥️ Interactive TUI & Desktop GUI[/bold yellow]
+    [cyan]arjax tui[/cyan]                  Interactive terminal UI (Deps, History, Orphans, Stats, Sync)
+    [cyan]arjax gui[/cyan]                  Desktop PyQt5 GUI
+
+[bold yellow]📖 Declarative Recipes & Auto-Sync[/bold yellow]
+    [cyan]arjax recipes list[/cyan]         View local vs upstream recipe versions
+    [cyan]arjax recipes sync[/cyan]         Auto-pull recipe updates from central registry
+
+[bold yellow]📜 Transaction History & Rollback[/bold yellow]
+    [cyan]arjax history list[/cyan]         Inspect past install/remove transactions
+    [cyan]arjax history rollback <id>[/cyan] Rollback previous transaction state
+
+[bold yellow]🧹 Maintenance & Orphans[/bold yellow]
+    [cyan]arjax cleanup orphans[/cyan]      DAG orphan detection with disk space calculation
+    [cyan]arjax cleanup cache[/cyan]        Clean package manager cache
+
+[bold yellow]📊 System Diagnostics[/bold yellow]
+    [cyan]arjax stats[/cyan]                Disk usage, package counts & system health alerts
+
+[bold yellow]🐚 Shell Autocompletion[/bold yellow]
+    [cyan]arjax completion install <shell>[/cyan] Install completions for bash, zsh, or fish
+
 [bold yellow]💡 Suggest[/bold yellow]
     Discover applications matching a specific purpose.
 
     [cyan]arjax suggest <purpose>[/cyan]
 
-    Examples:
-    [green]🔸 arjax suggest photo editing[/green]
-    [green]🔸 arjax suggest coding[/green]
-
     Options:
     [cyan]--list[/cyan]             Show all available purposes
-
-[bold yellow]🌐 Web Interface[/bold yellow]
-    [cyan]arjax web[/cyan]                  Launch local web UI
-    [cyan]--port[/cyan]                    Use custom port (default: 8000)
 
 [bold yellow]🔄 Updates[/bold yellow]
     [cyan]arjax update[/cyan]               Install updates for all tracked packages
@@ -832,7 +856,8 @@ Search once. Install from the best available source.
     [green]Arch, Manjaro, EndeavourOS, Ubuntu, Debian, Fedora,
     openSUSE, + any distro with Flatpak/Snap support[/green]
 
-[bold yellow]📚 Documentation[/bold yellow]
+[bold yellow]📚 Documentation & Manual[/bold yellow]
+    man arjax
     https://github.com/AdmGenSameer/arjax
 
 [bold yellow]🐛 Report Issues[/bold yellow]
@@ -843,23 +868,41 @@ Search once. Install from the best available source.
 def main() -> None:
     """
     Main entrypoint for CLI search + install flow.
-    IMPROVED: Better type annotations and error handling.
-    Handles custom help display and default search fallback.
+    Defaults to the interactive modern TUI whenever invoked in CLI without subcommands.
     """
     # Check for help flag first
     if len(sys.argv) > 1 and sys.argv[1] in ['--help', '-h', 'help']:
         show_custom_help()
         return
-    
-    # Check if first argument is a known subcommand
-    known_commands = ['search', 'install', 'suggest', 'upgrade', 'web', 'update', 'config', 'list-installed', 'service', 'cleanup', 'snapshot', 'setup', 'gui', 'uninstall']
-    
-    # If no arguments or first arg is not a known command, inject 'search' for backward compatibility
+
+    # Check for explicit tui flag
+    if len(sys.argv) > 1 and sys.argv[1] in ['--tui', '-t']:
+        sys.argv[1] = 'tui'
+
+    # If no arguments provided (user just types `arjax` or `archpkg`), launch TUI by default
+    if len(sys.argv) == 1:
+        try:
+            from arjax.config.manager import get_user_config
+            cfg = get_user_config()
+            if getattr(cfg, "default_interface", "tui") == "cli":
+                show_custom_help()
+                return
+        except Exception:
+            pass
+
+        if sys.stdin.isatty():
+            sys.argv.append("tui")
+        else:
+            show_custom_help()
+            return
+
+    known_commands = ['search', 'install', 'suggest', 'upgrade', 'web', 'update', 'config', 'settings', 'list-installed', 'service', 'cleanup', 'snapshot', 'setup', 'gui', 'uninstall', 'tui', 'recipes', 'history', 'completion', 'stats']
+
+    # If first arg is not a known command or flag, treat it as a search query
     if len(sys.argv) > 1 and sys.argv[1] not in known_commands and not sys.argv[1].startswith('-'):
-        # First argument is not a known command, treat it as a search query
         logger.info(f"No known subcommand detected, injecting 'search' command")
         sys.argv.insert(1, 'search')
-    
+
     app()
 
 # Typer Commands
@@ -947,7 +990,38 @@ def install(
     if debug:
         PackageHelperLogger.set_debug_mode(True)
         
-    package_name = " ".join(package)
+    if len(package) > 1:
+        console.print(f"[bold cyan]Initiating Parallel Package Installation ({len(package)} packages)...[/bold cyan]\n")
+        from arjax.installation.parallel import ParallelInstaller
+        from arjax.provider_engine import GoProviderEngine
+
+        engine = GoProviderEngine()
+        installer = ParallelInstaller(engine=engine)
+        results = installer.install_packages(package, provider=provider)
+
+        failed_list = []
+        for r in results:
+            if not r["success"]:
+                failed_list.append(r)
+
+        if not failed_list:
+            console.print("\n[bold green]✔ All packages installed successfully![/bold green]")
+            return
+
+        console.print(f"\n[bold red]✖ {len(failed_list)} package(s) failed during parallel installation:[/bold red]")
+        for r in failed_list:
+            pkg = r["package"]
+            err = r.get("error", "")
+            console.print(f"  - [bold red]{pkg}[/bold red]: {err}")
+            suggs = r.get("suggestions", [])
+            if suggs:
+                console.print(f"    [yellow]Alternative provider suggestions for '{pkg}':[/yellow]")
+                for s in suggs:
+                    console.print(f"      • [cyan]{s['provider'].upper()}:[/cyan] {s['command']}")
+
+        raise typer.Exit(1)
+
+    package_name = package[0]
 
     recipe_store = RecipeStore()
     provider_manager = ProviderManager()
@@ -985,11 +1059,21 @@ def install(
     if result.success:
         return
 
+    # If single install fails, show alternative provider suggestions
+    from arjax.core.errors import suggest_alternative_providers
+    from arjax.provider_engine import GoProviderEngine
+    engine = GoProviderEngine()
+    suggestions = suggest_alternative_providers(package_name, provider or "repo", engine)
+    if suggestions:
+        console.print(f"\n[yellow]Alternative provider suggestions for '{package_name}':[/yellow]")
+        for s in suggestions:
+            console.print(f"  • [cyan]{s['provider'].upper()}:[/cyan] {s['command']}")
+
     raise typer.Exit(1)
 
 @app.command()
 def search(
-    query: List[str] = Argument(..., help="Name of the software to search for"),
+    query: Optional[List[str]] = Argument(None, help="Name of the software to search for"),
     debug: bool = Option(False, "--debug", help="Enable debug logging"),
     limit: int = Option(5, "--limit", "-l", help="Maximum number of results to show"),
     aur: bool = Option(False, "--aur", help="Prefer AUR packages over Pacman"),
@@ -1001,23 +1085,31 @@ def search(
             "name, base, submitted, modified"
         ),
     ),
-    no_cache: bool = Option(False, "--no-cache", help="Bypass cache and perform fresh search")
+    no_cache: bool = Option(False, "--no-cache", help="Bypass cache and perform fresh search"),
+    tui: bool = Option(False, "--tui", "-t", help="Open search in interactive TUI"),
 ) -> None:
     """
     Search for packages across all available package managers.
     
     Supports multi-word queries: arjax search visual studio code
+    If no query is provided or --tui is set, opens interactive TUI.
     """
     if debug:
         PackageHelperLogger.set_debug_mode(True)
+
+    if not query or tui:
+        from arjax.interfaces.tui import launch_tui
+        launch_tui()
+        return
 
     # Join multi-word queries
     query_str = ' '.join(query)
     logger.info(f"Searching for: {query_str}")
 
     if not query_str.strip():
-        console.print("[red]Error: Empty search query[/red]")
-        raise typer.Exit(1)
+        from arjax.interfaces.tui import launch_tui
+        launch_tui()
+        return
 
     valid_aur_sort_fields = {
         'votes', 'popularity', 'id', 'baseid', 'name', 'base', 'submitted', 'modified'
@@ -1659,6 +1751,60 @@ def update(
             raise typer.Exit(1)
 
 @app.command()
+def interactive_settings_menu() -> None:
+    """Interactive CLI menu for customizing all Arjax settings."""
+    cfg = get_user_config()
+    fields = [
+        ("default_interface", "Default Interface Mode", ["tui", "cli"]),
+        ("user_mode", "User Profile Mode", ["normal", "advanced"]),
+        ("auto_update_enabled", "Auto-Update Enabled", [True, False]),
+        ("auto_update_mode", "Auto-Update Mode", ["automatic", "manual"]),
+        ("theme_mode", "Theme Mode", ["system", "dark", "light"]),
+        ("auto_handle_arch_news", "Auto-Handle Arch News", [True, False]),
+        ("auto_review_aur_trust", "Auto-Review AUR Trust", [True, False]),
+        ("auto_snapshot_before_update", "Auto-Snapshot Before Update", [True, False]),
+        ("proactive_system_advice", "Proactive System Advice", [True, False]),
+    ]
+
+    while True:
+        table = Table(title="⚙️ Arjax Configuration & Settings Manager", show_header=True, header_style="bold cyan")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Setting Description", style="bold white")
+        table.add_column("Current Value", style="bold green")
+        table.add_column("Available Choices", style="dim cyan")
+
+        for idx, (k, label, choices) in enumerate(fields, 1):
+            cur = getattr(cfg, k, None)
+            table.add_row(str(idx), label, str(cur), ", ".join(str(c) for c in choices))
+
+        console.print(table)
+        console.print("\n[dim]Enter a number (1-9) to modify setting, 's' to save & exit, or 'q' to cancel.[/dim]")
+        ans = typer.prompt("Select option", default="s").strip().lower()
+
+        if ans in ('s', 'q', 'exit', 'quit'):
+            if ans == 's':
+                save_user_config(cfg)
+                console.print("[bold green]✔ Settings saved successfully![/bold green]")
+            return
+
+        if ans.isdigit():
+            idx = int(ans) - 1
+            if 0 <= idx < len(fields):
+                k, label, choices = fields[idx]
+                cur = getattr(cfg, k, None)
+                console.print(f"\n[cyan]Editing {label}[/cyan] (Current: [bold]{cur}[/bold])")
+                for c_idx, c in enumerate(choices, 1):
+                    console.print(f"  {c_idx}) {c}")
+                c_choice = typer.prompt(f"Select choice [1-{len(choices)}]", default="1").strip()
+                if c_choice.isdigit():
+                    c_idx = int(c_choice) - 1
+                    if 0 <= c_idx < len(choices):
+                        setattr(cfg, k, choices[c_idx])
+                        console.print(f"[green]Set {k} = {choices[c_idx]}[/green]\n")
+
+
+@app.command(name="settings")
+@app.command(name="config")
 def config(
     key: Optional[str] = Argument(None, help="Configuration key to get/set"),
     value: Optional[str] = Argument(None, help="Value to set (if setting)"),
@@ -1666,36 +1812,41 @@ def config(
     debug: bool = Option(False, "--debug", help="Enable debug logging")
 ) -> None:
     """
-    Manage arjax configuration settings.
+    Manage and customize Arjax configuration settings interactively or via CLI.
     """
     if debug:
         PackageHelperLogger.set_debug_mode(True)
 
-    config = get_user_config()
+    config_obj = get_user_config()
 
     if list_all:
         console.print("[bold]Current Configuration:[/bold]")
-        for k, v in config.__dict__.items():
+        for k, v in config_obj.__dict__.items():
             if not k.startswith('_'):
                 console.print(f"  {k}: {v}")
         return
 
     if key is None:
-        console.print("[red]Error: Specify a configuration key or use --list[/red]")
-        raise typer.Exit(1)
+        if sys.stdin.isatty():
+            interactive_settings_menu()
+            return
+        else:
+            console.print("[bold]Current Configuration:[/bold]")
+            for k, v in config_obj.__dict__.items():
+                if not k.startswith('_'):
+                    console.print(f"  {k}: {v}")
+            return
 
     if value is None:
         # Get configuration value
-        if hasattr(config, key):
-            console.print(f"{key}: {getattr(config, key)}")
+        if hasattr(config_obj, key):
+            console.print(f"{key}: {getattr(config_obj, key)}")
         else:
             console.print(f"[red]Unknown configuration key: {key}[/red]")
             raise typer.Exit(1)
     else:
         # Set configuration value
         try:
-            # Convert value to appropriate type
-            from typing import Any
             converted_value: Any = value
             if value.lower() in ('true', 'false'):
                 converted_value = value.lower() == 'true'
@@ -1816,49 +1967,42 @@ def cleanup(
         raise typer.Exit(1)
     
     if target == "orphans":
-        console.print("[cyan]Checking for orphaned packages...[/cyan]")
-        
-        # Find orphaned packages
-        try:
-            result = subprocess.run(
-                ['paru', '-Qdtq'],
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            
-            orphans = [pkg.strip() for pkg in result.stdout.split('\n') if pkg.strip()]
-            
-            if not orphans:
-                console.print("[green]No orphaned packages found.[/green]")
-                return
-            
-            console.print(f"[yellow]Found {len(orphans)} orphaned package(s):[/yellow]")
-            for pkg in orphans:
-                console.print(f"  - {pkg}")
-            
-            if dry_run:
-                console.print("\n[cyan]Dry run mode - no packages will be removed.[/cyan]")
-                console.print(f"[cyan]To remove these packages, run: arjax cleanup orphans[/cyan]")
-                return
-            
-            # Confirm removal
-            if typer.confirm("\nDo you want to remove these orphaned packages?"):
-                console.print("[cyan]Removing orphaned packages...[/cyan]")
-                remove_cmd = ['paru', '-Rns'] + orphans
-                result = subprocess.run(remove_cmd)
-                
-                if result.returncode == 0:
-                    console.print("[green]Orphaned packages removed successfully![/green]")
-                else:
-                    console.print("[red]Failed to remove orphaned packages.[/red]")
-                    raise typer.Exit(1)
+        console.print("[cyan]Checking for orphaned packages (DAG Analysis)...[/cyan]")
+        from arjax.core.orphans import OrphanDetector, format_size_bytes
+        detector = OrphanDetector()
+        orphans = detector.find_orphans()
+        if not orphans:
+            console.print("[green]No orphaned packages found.[/green]")
+            return
+
+        total_bytes = sum(item.get("size_bytes", 0) for item in orphans)
+        total_str = format_size_bytes(total_bytes)
+
+        console.print(f"[yellow]Found {len(orphans)} orphaned package(s) [/yellow][bold green](Reclaimable Space: {total_str})[/bold green][yellow]:[/yellow]")
+        for item in orphans:
+            name = item.get("name", "")
+            reason = item.get("reason", "Unreferenced")
+            sz_str = item.get("size_str", "Unknown")
+            console.print(f"  - [bold cyan]{name}[/] [dim]({reason} • Size: {sz_str})[/]")
+
+        if dry_run:
+            console.print(f"\n[cyan]Dry run mode - would reclaim [bold green]{total_str}[/bold green] of disk space. No packages removed.[/cyan]")
+            return
+
+        if typer.confirm(f"\nDo you want to safely remove these {len(orphans)} orphaned packages and reclaim {total_str} of disk space?"):
+            console.print("[cyan]Removing orphaned packages with root privileges...[/cyan]")
+            res = detector.clean_orphans([item["name"] for item in orphans])
+            freed_str = res.get("reclaimed_size_str", total_str)
+            if res.get("success", False):
+                console.print(f"\n[bold green]✔ Successfully removed {res.get('count', 0)} orphan package(s) and freed {freed_str} of disk space![/bold green]")
             else:
-                console.print("[yellow]Cleanup cancelled.[/yellow]")
-        
-        except Exception as e:
-            console.print(f"[red]Error finding orphaned packages: {str(e)}[/red]")
-            raise typer.Exit(1)
+                rem_cnt = len(res.get("orphans_removed", []))
+                failed = res.get("failed", [])
+                if rem_cnt > 0:
+                    console.print(f"[yellow]Removed {rem_cnt} package(s) ({freed_str} freed). Failed to remove: {failed}[/yellow]")
+                else:
+                    console.print(f"[red]Failed to remove orphaned packages: {failed}[/red]")
+            return
     
     elif target == "cache":
         console.print("[cyan]Cleaning package cache...[/cyan]")
@@ -2179,5 +2323,237 @@ def snapshot(
         raise typer.Exit(1)
 
 
+history_app = typer.Typer(help="View transaction history and perform rollbacks", invoke_without_command=True)
+
+
+@history_app.callback()
+def history_main(ctx: typer.Context):
+    if ctx.invoked_subcommand is None:
+        history_list()
+
+
+@history_app.command("list")
+def history_list(limit: int = Option(20, "--limit", "-l", help="Number of records to show")):
+    """List recent package transaction history with status and timings."""
+    from arjax.core.history import TransactionManager
+    from rich.table import Table
+    mgr = TransactionManager()
+    txs = mgr.get_history(limit=limit)
+    if not txs:
+        console.print("[dim]No transaction history recorded yet.[/dim]")
+        return
+
+    table = Table(title="Arjax Transaction History", header_style="bold magenta")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Action", style="yellow")
+    table.add_column("Package", style="bold white")
+    table.add_column("Provider", style="blue")
+    table.add_column("Status")
+    table.add_column("Duration", justify="right", style="green")
+
+    for tx in txs:
+        status_fmt = f"[green]{tx.status}[/green]" if tx.status == "success" else f"[red]{tx.status}[/red]"
+        table.add_row(
+            tx.id,
+            tx.timestamp,
+            tx.action,
+            tx.package,
+            tx.provider,
+            status_fmt,
+            f"{tx.duration_ms} ms"
+        )
+    console.print(table)
+
+
+@history_app.command("rollback")
+def history_rollback(tx_id: str = Argument(..., help="Transaction ID to rollback")):
+    """Rollback a specific past package transaction."""
+    from arjax.core.history import TransactionManager
+    from arjax.provider_engine import GoProviderEngine
+
+    mgr = TransactionManager()
+    engine = GoProviderEngine(history_manager=mgr)
+    console.print(f"[cyan]Initiating rollback for transaction '{tx_id}'...[/cyan]")
+    res = mgr.rollback(tx_id, engine)
+    if res.get("success"):
+        console.print(f"[green]Successfully rolled back transaction '{tx_id}'! (Reversed {res.get('target_package')})[/green]")
+    else:
+        console.print(f"[red]Rollback failed: {res.get('error', 'unknown error')}[/red]")
+
+
+app.add_typer(history_app, name="history")
+
+
+completion_app = typer.Typer(help="Shell autocompletion generator and installer (bash, zsh, fish)")
+
+
+@completion_app.command("show")
+def completion_show(shell: str = Argument(..., help="Shell name: bash, zsh, or fish")):
+    """Output autocompletion script for the specified shell."""
+    from arjax.system.completions import generate_completion_script
+    try:
+        script = generate_completion_script(shell)
+        print(script)
+    except ValueError as e:
+        console.print(f"[red]{str(e)}[/red]")
+        raise typer.Exit(1)
+
+
+@completion_app.command("install")
+def completion_install(shell: str = Argument(..., help="Shell name: bash, zsh, or fish")):
+    """Install autocompletion script for specified shell."""
+    from arjax.system.completions import install_completion
+    try:
+        path = install_completion(shell)
+        console.print(f"[green]Successfully installed {shell} autocompletion script to:[bold] {path}[/bold][/green]")
+    except ValueError as e:
+        console.print(f"[red]{str(e)}[/red]")
+        raise typer.Exit(1)
+
+
+app.add_typer(completion_app, name="completion")
+
+
+@app.command("stats")
+def stats_dashboard():
+    """
+    Display interactive System Statistics & Health Diagnostics Dashboard.
+    """
+    from arjax.system.stats import gather_system_statistics
+    from rich.panel import Panel
+    from rich.columns import Columns
+    from rich.table import Table
+
+    console.print("[bold cyan]Gathering System Statistics & Diagnostics...[/bold cyan]")
+    st = gather_system_statistics()
+
+    # Disk usage panel
+    disk_text = "N/A"
+    if st.root_disk:
+        disk_text = (
+            f"[bold]Root (/):[/bold] {st.root_disk.formatted_used()} / {st.root_disk.formatted_total()} "
+            f"([bold yellow]{st.root_disk.percent_used:.1f}%[/bold yellow])\n"
+            f"[bold]Arjax Cache:[/bold] {st.arjax_cache_bytes / (1024**2):.1f} MB\n"
+            f"[bold]Package Cache:[/bold] {st.pkg_cache_bytes / (1024**2):.1f} MB"
+        )
+    disk_panel = Panel(disk_text, title="💾 Disk Usage", border_style="cyan")
+
+    # Package counts panel
+    pkg_text = ""
+    for prov, count in st.package_counts.items():
+        pkg_text += f"[bold magenta]{prov.upper()}:[/bold magenta] {count} packages\n"
+    if not pkg_text:
+        pkg_text = "No packages detected"
+    pkg_panel = Panel(pkg_text.strip(), title="📦 Package Counts", border_style="magenta")
+
+    # Status panel
+    status_text = (
+        f"[bold green]Pending Updates:[/bold green] {st.pending_updates}\n"
+        f"[bold yellow]Orphan Packages:[/bold yellow] {st.orphans_count}\n"
+        f"[bold red]Failed Services:[/bold red] {st.failed_services_count}"
+    )
+    status_panel = Panel(status_text, title="⚡ Maintenance Status", border_style="green")
+
+    console.print(Columns([disk_panel, pkg_panel, status_panel]))
+
+    # Health Alerts
+    if st.health_alerts:
+        alert_table = Table(title="🏥 System Health Alerts & Recommendations", header_style="bold red")
+        alert_table.add_column("Category", style="cyan")
+        alert_table.add_column("Severity", style="bold")
+        alert_table.add_column("Message", style="white")
+        alert_table.add_column("Recommendation", style="yellow")
+
+        for alert in st.health_alerts:
+            sev_color = "red" if alert.severity == "critical" else ("yellow" if alert.severity == "warning" else "blue")
+            alert_table.add_row(
+                alert.category,
+                f"[{sev_color}]{alert.severity.upper()}[/{sev_color}]",
+                alert.message,
+                alert.suggestion
+            )
+        console.print(alert_table)
+    else:
+        console.print("[bold green]✔ All system health diagnostics passed cleanly![/bold green]")
+
+
+recipes_app = typer.Typer(help="Manage and auto-update declarative software recipes", invoke_without_command=True)
+
+
+@recipes_app.callback()
+def recipes_main(ctx: typer.Context):
+    if ctx.invoked_subcommand is None:
+        recipes_list()
+
+
+@recipes_app.command("list")
+def recipes_list():
+    """List available declarative software recipes and version numbers."""
+    from arjax.installation.recipes import RecipeStore
+    from arjax.recipes.sync import RecipeSyncManager
+    from rich.table import Table
+
+    store = RecipeStore()
+    sync_mgr = RecipeSyncManager()
+
+    console.print("[cyan]Checking recipe versions...[/cyan]")
+    updates = {item["name"].lower(): item for item in sync_mgr.check_updates()}
+
+    table = Table(title="Declarative Package Recipes", header_style="bold magenta")
+    table.add_column("Recipe Name", style="bold cyan")
+    table.add_column("Display Name")
+    table.add_column("Local Version", style="green")
+    table.add_column("Upstream Version", style="yellow")
+    table.add_column("Status")
+
+    for loc in store.load_all():
+        rec = loc.recipe
+        name_lower = rec.name.lower()
+        up_item = updates.get(name_lower)
+        rem_ver = up_item["remote_version"] if up_item else rec.version
+        st_text = f"[yellow]{up_item['status'].upper()}[/yellow]" if up_item else "[green]UP TO DATE[/green]"
+
+        table.add_row(
+            rec.name,
+            rec.display_name or rec.name,
+            rec.version,
+            rem_ver,
+            st_text
+        )
+
+    console.print(table)
+
+
+@recipes_app.command("sync")
+@recipes_app.command("update")
+def recipes_sync(force: bool = Option(False, "--force", "-f", help="Force re-download all recipes")):
+    """Auto-pull recipe updates from central registry."""
+    from arjax.recipes.sync import RecipeSyncManager
+    console.print("[cyan]Auto-syncing declarative recipes from central registry...[/cyan]")
+    sync_mgr = RecipeSyncManager()
+    res = sync_mgr.sync_recipes(force=force)
+
+    if res.get("success"):
+        console.print(f"[bold green]✔ Recipe auto-sync completed! Updated {res.get('updated_count')} recipe(s).[/bold green]")
+        for name in res.get("updated_recipes", []):
+            console.print(f"  - [cyan]{name}[/cyan] updated in [dim]{res.get('target_dir')}[/dim]")
+    else:
+        console.print(f"[yellow]Recipe sync completed with warnings. Failed: {res.get('failed_recipes')}[/yellow]")
+
+
+app.add_typer(recipes_app, name="recipes")
+
+
+@app.command()
+def tui() -> None:
+    """
+    Launch interactive Terminal User Interface (TUI).
+    """
+    from arjax.interfaces.tui import launch_tui
+    launch_tui()
+
+
 if __name__ == '__main__':
-    app()
+    main()
+

@@ -19,7 +19,7 @@ LOW_PRIORITY_KEYWORDS = ["extension", "plugin", "helper", "daemon", "patch", "th
 BOOST_KEYWORDS = ["editor", "browser", "ide", "official", "gui", "android", "studio", "stable", "canary", "beta"]
 
 # Supported platforms
-SUPPORTED_PLATFORMS = ["arch", "debian", "ubuntu", "kali", "linuxmint", "mint", "fedora", "manjaro", "opensuse", "suse"]
+SUPPORTED_PLATFORMS = ["arch", "debian", "ubuntu", "kali", "linuxmint", "mint", "fedora", "manjaro", "opensuse", "suse", "pop", "pop-os", "pop_os", "elementary"]
 
 # Distribution mapping
 DISTRO_MAP = {
@@ -34,6 +34,8 @@ DISTRO_MAP = {
     "mint": "debian",
     "kali": "debian",
     "pop": "debian",
+    "pop-os": "debian",
+    "pop_os": "debian",
     "elementary": "debian",
     "fedora": "fedora",
     "rhel": "fedora",

@@ -31,6 +31,7 @@ class Recipe:
     name: str
     display_name: Optional[str] = None
     description: str = ""
+    version: str = "1.0.0"
     aliases: List[str] = field(default_factory=list)
     providers: Dict[str, ProviderConfig] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)

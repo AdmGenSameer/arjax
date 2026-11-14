@@ -20,7 +20,7 @@ try:
         QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QLabel,
         QComboBox, QTabWidget, QTextEdit, QProgressBar, QMessageBox,
         QHeaderView, QStatusBar, QGroupBox, QCheckBox, QSpinBox,
-        QListWidget, QListWidgetItem, QSplitter, QFrame
+        QListWidget, QListWidgetItem, QSplitter, QFrame, QStackedWidget
     )
     from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
     from PyQt5.QtGui import QFont, QPalette, QColor, QIcon
@@ -38,12 +38,13 @@ from arjax.search.dnf import search_dnf
 from arjax.search.zypper import search_zypper
 from arjax.search.flatpak import search_flatpak
 from arjax.search.snap import search_snap
+from arjax.search.ranking import deduplicate_packages, get_top_matches
 from arjax.package_management.command_gen import generate_command
 from arjax.config.manager import get_user_config, save_user_config, set_config_option
 from arjax.intelligence.advisor import assess_aur_trust, get_arch_news, apply_user_mode_defaults
 from arjax.integrations.github import install_from_github, validate_github_url
 from arjax.config.logging import get_logger
-from arjax.search.ranking import deduplicate_packages, get_top_matches
+from arjax.provider_engine import GoProviderEngine
 
 logger = get_logger(__name__)
 
@@ -61,7 +62,7 @@ SOURCE_COMMANDS = {
 
 
 class SearchWorker(QThread):
-    """Background worker for package searches."""
+    """Background worker for package searches with Go Engine acceleration."""
     
     results_ready = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
@@ -72,48 +73,63 @@ class SearchWorker(QThread):
         self.detected_distro = detected_distro
         self.distro_family = distro_family
         self.sources = sources
+        self.engine = GoProviderEngine()
     
     def run(self):
         """Execute search in background thread."""
         try:
             results = []
             
-            for source in self.sources:
+            # Fast path: Use Go Provider Engine if available
+            if self.engine.is_available():
                 try:
-                    if source == 'pacman':
-                        pkg_list = search_pacman(self.query)
-                        results.extend(pkg_list)
-                    elif source == 'aur':
-                        pkg_list = search_aur(self.query)
-                        results.extend(pkg_list)
-                    elif source == 'apt':
-                        pkg_list = search_apt(self.query)
-                        results.extend(pkg_list)
-                    elif source == 'dnf':
-                        pkg_list = search_dnf(self.query)
-                        results.extend(pkg_list)
-                    elif source == 'zypper':
-                        pkg_list = search_zypper(self.query)
-                        results.extend(pkg_list)
-                    elif source == 'flatpak':
-                        pkg_list = search_flatpak(self.query)
-                        results.extend(pkg_list)
-                    elif source == 'snap':
-                        pkg_list = search_snap(self.query)
-                        results.extend(pkg_list)
+                    res = self.engine.search(self.query)
+                    pkgs = res.get("packages", [])
+                    for p in pkgs:
+                        results.append({
+                            "name": p.get("name", ""),
+                            "version": p.get("version", ""),
+                            "description": p.get("description", ""),
+                            "source": p.get("provider", "repository"),
+                            "manager": p.get("provider", "repository"),
+                            "repo": p.get("repo", ""),
+                            "source_url": p.get("source", ""),
+                        })
                 except Exception as e:
-                    logger.error(f"Error searching {source}: {e}")
+                    logger.warning(f"Go provider engine search fallback: {e}")
+            
+            # If no Go engine or results empty, fallback to Python provider search
+            if not results:
+                for source in self.sources:
+                    try:
+                        if source == 'pacman':
+                            pkg_list = search_pacman(self.query)
+                            results.extend(pkg_list)
+                        elif source == 'aur':
+                            pkg_list = search_aur(self.query)
+                            results.extend(pkg_list)
+                        elif source == 'apt':
+                            pkg_list = search_apt(self.query)
+                            results.extend(pkg_list)
+                        elif source == 'dnf':
+                            pkg_list = search_dnf(self.query)
+                            results.extend(pkg_list)
+                        elif source == 'zypper':
+                            pkg_list = search_zypper(self.query)
+                            results.extend(pkg_list)
+                        elif source == 'flatpak':
+                            pkg_list = search_flatpak(self.query)
+                            results.extend(pkg_list)
+                        elif source == 'snap':
+                            pkg_list = search_snap(self.query)
+                            results.extend(pkg_list)
+                    except Exception as e:
+                        logger.error(f"Error searching {source}: {e}")
             
             # Apply ranking and deduplication for better search results
             if results:
-                # Deduplicate results (prefer pacman over AUR for duplicates)
                 results = deduplicate_packages(results, prefer_aur=False)
-                logger.info(f"Deduplicated to {len(results)} unique packages")
-                
-                # Rank results by relevance using sophisticated scoring algorithm
-                # Show top 50 most relevant results instead of all results
                 results = get_top_matches(self.query, results, limit=50)
-                logger.info(f"Ranked and limited to top {len(results)} matches")
             
             self.results_ready.emit(results)
         except Exception as e:
@@ -121,7 +137,7 @@ class SearchWorker(QThread):
 
 
 class InstallWorker(QThread):
-    """Background worker for package installation."""
+    """Background worker for package installation with Go Engine integration."""
     
     finished = pyqtSignal(bool, str)
     progress = pyqtSignal(str)
@@ -130,12 +146,24 @@ class InstallWorker(QThread):
         super().__init__()
         self.package_name = package_name
         self.source = source
+        self.engine = GoProviderEngine()
     
     def run(self):
         """Execute installation in background thread."""
         try:
-            self.progress.emit(f"Generating install command for {self.package_name}...")
+            self.progress.emit(f"Starting installation for {self.package_name}...")
             
+            # If Go engine is available, try fast engine execution
+            if self.engine.is_available():
+                self.progress.emit(f"Engaging Arjax Go Provider Engine for {self.package_name}...")
+                res = self.engine.install(self.package_name)
+                if res.get("success", False):
+                    self.finished.emit(True, f"Successfully installed {self.package_name} via {res.get('provider', 'engine')}")
+                    return
+                elif "error" in res and res["error"]:
+                    logger.warning(f"Engine install error, falling back: {res['error']}")
+            
+            self.progress.emit(f"Generating install command for {self.package_name}...")
             command = generate_command(self.package_name, self.source)
             if not command:
                 self.finished.emit(False, f"Could not generate install command for {self.package_name}")
@@ -257,20 +285,39 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.theme_toggle_button)
         main_layout.addWidget(header)
         
-        # Create tab widget
-        self.tabs = QTabWidget()
-        self.tabs.setTabPosition(QTabWidget.West)
-        self.tabs.setDocumentMode(True)
-        self.tabs.tabBar().setExpanding(False)
-        self.tabs.tabBar().setUsesScrollButtons(True)
-        self.tabs.tabBar().setElideMode(Qt.ElideRight)
-        main_layout.addWidget(self.tabs)
+        # Create Main Splitter
+        self.main_content_splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(self.main_content_splitter)
+        
+        # Sidebar
+        self.sidebar = QListWidget()
+        self.sidebar.setObjectName("Sidebar")
+        self.sidebar.setFixedWidth(220)
+        self.sidebar.addItem(QListWidgetItem(QIcon.fromTheme("system-search"), "Search & Install"))
+        self.sidebar.addItem(QListWidgetItem(QIcon.fromTheme("system-software-install"), "Installed Packages"))
+        self.sidebar.addItem(QListWidgetItem(QIcon.fromTheme("preferences-system"), "Maintenance"))
+        self.sidebar.addItem(QListWidgetItem(QIcon.fromTheme("preferences-desktop"), "Settings"))
+        self.sidebar.currentRowChanged.connect(self.switch_tab)
+        
+        self.main_content_splitter.addWidget(self.sidebar)
+        
+        # Stacked Widget
+        self.tabs = QStackedWidget()
+        self.main_content_splitter.addWidget(self.tabs)
+        self.main_content_splitter.setStretchFactor(1, 1)
         
         # Create tabs
         self.create_search_tab()
         self.create_installed_tab()
         self.create_maintenance_tab()
         self.create_settings_tab()
+        
+        # Set default tab
+        self.sidebar.setCurrentRow(0)
+        
+    def switch_tab(self, index):
+        """Switch stacked widget to the selected sidebar index."""
+        self.tabs.setCurrentIndex(index)
         
         # Status bar
         self.status_bar = QStatusBar()
@@ -345,7 +392,7 @@ class MainWindow(QMainWindow):
         self.results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.results_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.results_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.results_table.setAlternatingRowColors(True)
+        self.results_table.setShowGrid(False)
         self.results_table.setSortingEnabled(True)
         self.results_table.itemSelectionChanged.connect(self.on_package_selected)
         splitter.addWidget(self.results_table)
@@ -379,8 +426,8 @@ class MainWindow(QMainWindow):
         details_layout.addLayout(button_layout)
         splitter.addWidget(details_widget)
         
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
         
         layout.addWidget(splitter)
         
@@ -390,16 +437,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.progress_bar)
         
         # Output log
-        output_group = QGroupBox("Output Log")
+        self.output_group = QGroupBox("Output Log")
+        self.output_group.setVisible(False)
         output_layout = QVBoxLayout()
         self.output_log = QTextEdit()
         self.output_log.setReadOnly(True)
         self.output_log.setMaximumHeight(150)
         output_layout.addWidget(self.output_log)
-        output_group.setLayout(output_layout)
-        layout.addWidget(output_group)
+        self.output_group.setLayout(output_layout)
+        layout.addWidget(self.output_group)
         
-        self.tabs.addTab(search_widget, "Search & Install")
+        self.tabs.addWidget(search_widget)
     
     def create_installed_tab(self):
         """Create the installed packages tab."""
@@ -452,7 +500,7 @@ class MainWindow(QMainWindow):
         self.installed_info_label = QLabel("Click 'Refresh List' to load applications and dependencies")
         layout.addWidget(self.installed_info_label)
         
-        self.tabs.addTab(installed_widget, "Installed Packages")
+        self.tabs.addWidget(installed_widget)
     
     def create_maintenance_tab(self):
         """Create the system maintenance tab."""
@@ -537,7 +585,7 @@ class MainWindow(QMainWindow):
         
         layout.addStretch()
         
-        self.tabs.addTab(maintenance_widget, "System Maintenance")
+        self.tabs.addWidget(maintenance_widget)
     
     def create_settings_tab(self):
         """Create the settings tab."""
@@ -632,7 +680,7 @@ class MainWindow(QMainWindow):
         save_btn.clicked.connect(self.save_settings)
         layout.addWidget(save_btn)
         
-        self.tabs.addTab(settings_widget, "Settings")
+        self.tabs.addWidget(settings_widget)
 
     def detect_system_theme(self) -> str:
         """Detect whether the system palette indicates dark or light theme."""
@@ -870,6 +918,7 @@ class MainWindow(QMainWindow):
         
         self.log_to_output(f"Starting installation of {pkg_name} from {source}...")
         self.status_bar.showMessage(f"Installing {pkg_name}...")
+        self.output_group.setVisible(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)
         
@@ -894,6 +943,7 @@ class MainWindow(QMainWindow):
         if success:
             self.status_bar.showMessage("Installation completed successfully")
             QMessageBox.information(self, "Success", message)
+            self.output_group.setVisible(False)
         else:
             self.status_bar.showMessage("Installation failed")
             QMessageBox.critical(self, "Installation Failed", message)

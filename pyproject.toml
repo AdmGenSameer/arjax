@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arjax"
-version = "0.1.1"
-description = "Arjax CLI tool"
+version = "2.0.0"
+description = "Universal Linux Package Discovery & Installation Engine"
 authors = [{ name="AdmGenSameer", email="sameers00324@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3"
+requires-python = ">=3.9"
 
 dependencies = [
   "requests",
@@ -17,13 +17,15 @@ dependencies = [
   "distro",
   "beautifulsoup4",
   "rapidfuzz>=3.0.0",
-  "PyYAML"
+  "PyYAML",
+  "textual>=0.80.0"
 ]
 
 [project.optional-dependencies]
 github = ["GitPython"]
 gui = ["PyQt5>=5.15.0"]
-all = ["GitPython", "PyQt5>=5.15.0"]
+tui = ["textual>=0.80.0"]
+all = ["GitPython", "PyQt5>=5.15.0", "textual>=0.80.0"]
 
 [project.scripts]
 arjax = "arjax.interfaces.cli:main"
@@ -40,7 +42,8 @@ packages = [
   "arjax.integrations",
   "arjax.installation",
   "arjax.system",
-  "arjax.core"
+  "arjax.core",
+  "arjax.recipes"
 ]
 
 [tool.setuptools.package-data]
@@ -48,3 +51,7 @@ arjax = ["*.yaml", "*.yml", "recipes/*.yaml", "recipes/*.yml", "*.json", "templa
 
 [tool.setuptools.data-files]
 "share/applications" = ["arjax.desktop"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

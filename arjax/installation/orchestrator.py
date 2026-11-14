@@ -159,9 +159,10 @@ class InstallationOrchestrator:
                 # Try next provider
                 continue
             else:
-                console.print(f"[red]✗[/red] Failed {provider.name}: {result.error or result.message}")
+                console.print(f"[yellow]⚠[/yellow] Failed {provider.name}: {result.error or result.message}")
+                console.print("[dim]Falling back to next available provider...[/dim]\n")
                 selected_result = result
-                break
+                continue
 
         if not selected_result:
             selected_result = ProviderResult(

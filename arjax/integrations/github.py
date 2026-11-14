@@ -9,6 +9,10 @@ import shutil
 import tempfile
 import subprocess
 import re
+import urllib.request
+import urllib.parse
+import json
+import platform
 from typing import Optional, Dict, List, Tuple, Any
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -429,7 +433,13 @@ def validate_github_url(url_or_repo: str) -> Optional[str]:
     if url_or_repo.startswith("git@github.com:"):
         return url_or_repo
 
-    print("  ✗ Invalid GitHub URL format. Use: github:user/repo or https://github.com/user/repo")
+    # Handle bare user/repo format (e.g. crmne/zapfast)
+    if "/" in url_or_repo and not url_or_repo.startswith("http") and not url_or_repo.startswith("/"):
+        parts = url_or_repo.strip().split("/")
+        if len(parts) == 2 and parts[0] and parts[1]:
+            return f"https://github.com/{url_or_repo}.git"
+
+    print("  ✗ Invalid GitHub URL format. Use: user/repo, github:user/repo or https://github.com/user/repo")
     return None
 
 def install_from_github(repo_spec: str) -> bool:
@@ -517,3 +527,210 @@ def check_dependencies() -> Dict[str, bool]:
             deps[dep] = False
 
     return deps
+
+
+def search_github_repositories(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Search GitHub repositories using the GitHub API.
+    
+    Args:
+        query: Repository search query
+        limit: Max results to return
+        
+    Returns:
+        List of repository information dicts
+    """
+    clean_query = query.strip()
+    encoded = urllib.parse.quote_plus(clean_query)
+    url = f"https://api.github.com/search/repositories?q={encoded}&sort=stars&order=desc"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "arjax/2.0 (Linux; cross-distro package manager)",
+            "Accept": "application/vnd.github.v3+json",
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            items = data.get("items", [])
+            results = []
+            for item in items[:limit]:
+                results.append({
+                    "name": item.get("name", ""),
+                    "full_name": item.get("full_name", ""),
+                    "description": item.get("description", ""),
+                    "stars": item.get("stargazers_count", 0),
+                    "html_url": item.get("html_url", ""),
+                    "default_branch": item.get("default_branch", "main"),
+                })
+            return results
+    except Exception as e:
+        logger.debug(f"GitHub repository search failed for '{query}': {e}")
+        return []
+
+
+def get_latest_github_release(repo_full_name: str) -> Optional[Dict[str, Any]]:
+    """Fetch latest release info and assets for a GitHub repository.
+    
+    Args:
+        repo_full_name: Repository in 'owner/repo' format
+        
+    Returns:
+        Release dictionary with tag_name, name, and assets, or None
+    """
+    headers = {
+        "User-Agent": "arjax/2.0 (Linux; cross-distro package manager)",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    # First try /releases/latest
+    latest_url = f"https://api.github.com/repos/{repo_full_name}/releases/latest"
+    try:
+        req = urllib.request.Request(latest_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=12) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return _format_release_data(data)
+    except urllib.error.HTTPError as http_err:
+        if http_err.code != 404:
+            logger.debug(f"GitHub release fetch HTTP error {http_err.code} for {repo_full_name}")
+            return None
+    except Exception as e:
+        logger.debug(f"GitHub latest release fetch failed for {repo_full_name}: {e}")
+        return None
+
+    # Fallback to /releases (first non-draft)
+    releases_url = f"https://api.github.com/repos/{repo_full_name}/releases?per_page=5"
+    try:
+        req = urllib.request.Request(releases_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=12) as response:
+            releases = json.loads(response.read().decode("utf-8"))
+            for rel in releases:
+                if not rel.get("draft", False):
+                    return _format_release_data(rel)
+    except Exception as e:
+        logger.debug(f"GitHub releases fallback list failed for {repo_full_name}: {e}")
+        return None
+
+    return None
+
+
+def _format_release_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    assets = []
+    for a in data.get("assets", []):
+        assets.append({
+            "name": a.get("name", ""),
+            "browser_download_url": a.get("browser_download_url", ""),
+            "size": a.get("size", 0),
+            "content_type": a.get("content_type", ""),
+        })
+    return {
+        "tag_name": data.get("tag_name", ""),
+        "name": data.get("name", ""),
+        "body": data.get("body", ""),
+        "assets": assets,
+    }
+
+
+def select_best_github_asset(
+    assets: List[Dict[str, Any]],
+    distro_family: str,
+    machine_arch: Optional[str] = None,
+    preferred_format: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Select the most suitable release asset for the current OS and architecture.
+    
+    Args:
+        assets: List of release asset dictionaries
+        distro_family: Distribution family ('debian', 'arch', 'fedora', 'suse')
+        machine_arch: Machine architecture (defaults to platform.machine())
+        preferred_format: Optional forced format ('appimage', 'deb', 'rpm')
+        
+    Returns:
+        Best matching asset dictionary or None
+    """
+    if not assets:
+        return None
+
+    arch = (machine_arch or platform.machine()).lower()
+    is_x86_64 = arch in ("x86_64", "amd64", "x64")
+    is_arm64 = arch in ("aarch64", "arm64", "armv8")
+
+    def score_asset(asset: Dict[str, Any]) -> int:
+        name = asset.get("name", "").lower()
+        if not name:
+            return -1000
+
+        # Exclude non-Linux files
+        if any(bad in name for bad in [".exe", ".msi", ".dmg", ".pkg", "windows", "win32", "win64", "win-x64", "darwin", "macos", "apple"]):
+            return -1000
+        # Exclude checksums and signatures
+        if any(name.endswith(ext) for ext in [".sha256", ".sha512", ".md5", ".sig", ".asc", ".blockmap", ".txt", ".sha1"]):
+            return -1000
+        # Exclude source/packaging-only tars
+        if "packaging" in name or "checksum" in name:
+            return -1000
+
+        # Architecture filtering
+        if is_x86_64:
+            if any(a in name for a in ["arm64", "aarch64", "armv7", "armv6", "i386", "i686"]):
+                return -1000
+        elif is_arm64:
+            if any(a in name for a in ["x86_64", "amd64", "x64", "i386", "i686"]):
+                return -1000
+
+        score = 0
+
+        # Architecture affinity
+        if is_x86_64 and any(a in name for a in ["x86_64", "amd64", "x64"]):
+            score += 50
+        elif is_arm64 and any(a in name for a in ["aarch64", "arm64"]):
+            score += 50
+
+        # Explicit user preference boost
+        if preferred_format == "appimage" and name.endswith(".appimage"):
+            score += 300
+        elif preferred_format == "deb" and name.endswith(".deb"):
+            score += 300
+        elif preferred_format == "rpm" and name.endswith(".rpm"):
+            score += 300
+
+        # Distro family preferences
+        if distro_family == "debian":
+            if name.endswith(".deb"):
+                score += 150
+            elif name.endswith(".appimage"):
+                score += 100
+            elif name.endswith(".flatpak"):
+                score += 80
+            elif name.endswith((".tar.gz", ".tar.xz", ".tgz")) and "linux" in name:
+                score += 40
+        elif distro_family == "fedora":
+            if name.endswith(".rpm"):
+                score += 150
+            elif name.endswith(".appimage"):
+                score += 100
+            elif name.endswith((".tar.gz", ".tar.xz", ".tgz")) and "linux" in name:
+                score += 40
+        elif distro_family == "arch":
+            if name.endswith(".appimage"):
+                score += 120
+            elif name.endswith((".tar.gz", ".tar.xz", ".tgz")) and "linux" in name:
+                score += 60
+            elif name.endswith(".deb"):
+                score += 20
+        else:
+            if name.endswith(".appimage"):
+                score += 120
+            elif name.endswith(".deb") or name.endswith(".rpm"):
+                score += 80
+            elif name.endswith((".tar.gz", ".tar.xz", ".tgz")) and "linux" in name:
+                score += 50
+
+        return score
+
+    scored = [(score_asset(a), a) for a in assets]
+    valid = [item for item in scored if item[0] > 0]
+    if not valid:
+        return None
+
+    valid.sort(key=lambda x: x[0], reverse=True)
+    return valid[0][1]

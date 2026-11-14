@@ -1,9 +1,10 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
+
+# Distribution / packaging
 build/
 develop-eggs/
 dist/
@@ -16,31 +17,61 @@ parts/
 sdist/
 var/
 wheels/
-pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
 
-# Virtual Environment
+# Virtual environments
+.venv/
 venv/
 ENV/
 env/
-.venv
+env.bak/
+venv.bak/
 
-# IDE
+# Installer & Go build artifacts
+bin/
+arjax/bin/
+arjax-provider-engine/bin/
+arjax-provider
+arjax-provider-engine/arjax-provider
+*.AppImage
+*.deb
+*.rpm
+*.tar.gz
+*.tar.xz
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Caches & local application data
+.cache/
+*.log
+*.sqlite3
+*.db
+.arjax/
+uv.lock
+
+# IDEs & Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.bak
 
-# OS
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
-
-# Local testing
-.pytest_cache/
-.coverage
-htmlcov/

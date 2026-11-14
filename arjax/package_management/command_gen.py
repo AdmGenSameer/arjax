@@ -115,15 +115,15 @@ def generate_command(pkg_name: str, source: str) -> Optional[str]:
     
     # Generate commands based on source
     try:
-        if source == 'pacman':
-            logger.debug("Generating Arch package install command (using paru)")
+        if source in ('pacman', 'paru'):
+            logger.debug(f"Generating Arch package install command for source '{source}' (using paru/pacman)")
             # Try paru first (handles both repos and AUR), fallback to pacman
             if check_command_availability('paru'):
                 command = f"paru -S {pkg_name}"
                 logger.info(f"Generated paru command: {command}")
                 return command
             elif check_command_availability('pacman'):
-                command = build_privileged_command(f"pacman -S {pkg_name}")
+                command = build_privileged_command(f"pacman -S --noconfirm {pkg_name}")
                 logger.info(f"Generated pacman command (paru not available): {command}")
                 return command
             else:
@@ -167,7 +167,7 @@ def generate_command(pkg_name: str, source: str) -> Optional[str]:
                 raise PackageManagerNotFound(
                     "Flatpak is not installed. Install it with your system package manager."
                 )
-            command = f"flatpak install flathub {pkg_name}"
+            command = f"flatpak install -y flathub {pkg_name}"
             logger.info(f"Generated Flatpak command: {command}")
             return command
             
@@ -178,7 +178,7 @@ def generate_command(pkg_name: str, source: str) -> Optional[str]:
                 raise PackageManagerNotFound(
                     "APT is not available. This command requires a Debian/Ubuntu-based system."
                 )
-            command = build_privileged_command(f"apt install {pkg_name}")
+            command = build_privileged_command(f"apt install -y {pkg_name}")
             logger.info(f"Generated APT command: {command}")
             return command
             
@@ -219,7 +219,7 @@ def generate_command(pkg_name: str, source: str) -> Optional[str]:
             logger.error(f"Unsupported package source: '{source}'")
             raise ValidationError(
                 f"Unsupported package source: '{source}'. "
-                "Supported sources: pacman, aur, flatpak, apt, dnf, zypper, snap"
+                "Supported sources: pacman, paru, aur, flatpak, apt, dnf, zypper, snap"
             )
             
     except (PackageManagerNotFound, ValidationError):

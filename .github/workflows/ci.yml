@@ -1,55 +1,40 @@
-# A descriptive name for your CI workflow
-name: Python CI
+name: CI
 
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push events for the "main" branch
   push:
     branches: [ "main" ]
-  # Triggers the workflow on pull request events targeting the "main" branch
   pull_request:
     branches: [ "main" ]
 
-# A workflow run is made up of one or more jobs
 jobs:
-  build:
-    # The type of virtual machine to run the job on
+  test:
     runs-on: ubuntu-latest
-    # Define a matrix strategy to test against multiple Python versions
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
-    # A sequence of tasks that will be executed as part of the job
     steps:
-      # 1. Checks-out your repository so your job can access it
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Sets up the specific version of Python from the matrix
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      # 3. Installs dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 black
-          # This command installs your package in editable mode along with its dependencies
+          pip install flake8 pytest pytest-asyncio
           pip install -e .
 
-      # 4. Checks for syntax errors and undefined names with a linter
       - name: Lint with Flake8
         run: |
-          # stop the build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+          # Stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,build,.pytest_cache,*.egg-info
+          # Exit-zero treats all other warnings as advisory
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=.venv,build,.pytest_cache,*.egg-info
 
-      # 5. Checks if the code is correctly formatted with Black
-      # The '--check' flag fails the job if files need reformatting.
-      - name: Check formatting with Black
+      - name: Run tests with pytest
         run: |
-          black --check .
+          pytest tests

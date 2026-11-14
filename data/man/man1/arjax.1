@@ -1,0 +1,119 @@
+.\" Manual page for arjax
+.TH ARJAX 1 "August 2026" "Arjax 1.0.0" "User Commands"
+.SH NAME
+arjax \- Universal cross-distribution package helper and manager
+.SH SYNOPSIS
+.B arjax
+.br
+.B arjax
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR]...
+.SH DESCRIPTION
+\fBarjax\fR is a unified, provider-agnostic package manager wrapper designed to search, install, upgrade, and manage software across native distribution package managers (pacman, apt, dnf, zypper), AUR, Flatpak, Snap, GitHub releases, and vendor scripts.
+
+Invoking \fBarjax\fR with no arguments in the CLI launches the interactive Terminal User Interface (TUI) by default.
+
+It provides an interactive Ratatui-like TUI, parallel multi-package downloads with progress bars, DAG-based orphan detection, transaction history & rollback, system health diagnostics, and declarative recipe auto-syncing.
+
+.SH COMMANDS
+
+.TP
+\fBsearch\fR \fIQUERY\fR
+Search for software across all enabled providers concurrently.
+
+.TP
+\fBinstall\fR \fIPACKAGE...\fR [\fB--provider\fR, \fB-p\fR \fIPROVIDER\fR]
+Install one or multiple packages concurrently. Supports parallel multi-package installation with progress meters, provider hints, and automatic fallback suggestions on failure.
+
+.TP
+\fBremove\fR \fIPACKAGE\fR
+Uninstall a package using the appropriate provider.
+
+.TP
+\fBupdate\fR, \fBupgrade\fR
+Check for and apply system software updates across distribution repositories and flatpaks.
+
+.TP
+\fBtui\fR
+Launch the interactive Terminal User Interface featuring live search, package browser, dependency tree visualization, transaction log inspector, orphan scanner, and system health dashboard.
+
+.TP
+\fBrecipes\fR [\fBlist\fR | \fBsync\fR | \fBupdate\fR]
+Manage declarative software recipes.
+.RS
+.IP \fBlist\fR
+Display available local recipes, remote versions, and update status.
+.IP \fBsync\fR, \fBupdate\fR
+Auto-pull recipe updates from upstream central registry into ~/.config/arjax/recipes/.
+.RE
+
+.TP
+\fBhistory\fR [\fBlist\fR | \fBrollback\fR \fITX_ID\fR]
+Inspect and manage package transaction logs.
+.RS
+.IP \fBlist\fR
+List recorded installation and removal operations with timestamps and status.
+.IP \fBrollback\fR \fITX_ID\fR
+Rollback a specific past transaction (reversing installs into removals and removals into installs).
+.RE
+
+.TP
+\fBcleanup orphans\fR [\fB--dry-run\fR]
+Scan for unused orphan packages using Directed Acyclic Graph (DAG) dependency analysis.
+
+.TP
+\fBstats\fR
+Display interactive System Statistics & Health Diagnostics Dashboard (disk usage, package counts, pending updates, orphan count, systemd health alerts).
+
+.TP
+\fBcompletion\fR [\fBshow\fR | \fBinstall\fR] \fISHELL\fR
+Generate or install shell autocompletions for \fIbash\fR, \fIzsh\fR, or \fIfish\fR.
+
+.TP
+\fBsetup\fR [\fB--mode\fR \fInormal|advanced\fR]
+Interactive onboarding setup for profile configuration and background update monitoring.
+
+.SH TUI KEYBINDINGS
+.TP
+.B Enter
+Install selected package
+.TP
+.B d
+Show Dependency Tree Visualization
+.TP
+.B h
+Inspect Transaction History Log
+.TP
+.B o
+Scan for Orphan Packages (DAG analysis)
+.TP
+.B s
+Display System Statistics & Health Diagnostics Dashboard
+.TP
+.B u
+Sync Declarative Recipes from central registry
+.TP
+.B q
+Quit TUI
+
+.SH FILES
+.TP
+.I ~/.config/arjax/config.json
+User configuration file.
+.TP
+.I ~/.local/share/arjax/history.json
+Transaction log history storage.
+.TP
+.I ~/.arjax/logs/arjax.log
+Detailed application execution and error logs.
+.TP
+.I ~/.config/arjax/recipes/
+Custom and auto-synced declarative package recipes.
+
+.SH SEE ALSO
+.BR pacman (8),
+.BR apt (8),
+.BR flatpak (1),
+.BR snap (1)
+
+.SH AUTHOR
+Created by Sameer (AdmGenSameer).
