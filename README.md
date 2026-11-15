@@ -1,582 +1,412 @@
-<h2 align="center">🎯 Open Source Programmes ⭐</h2>
+<div align="center">
+
+# ⚡ Arjax
+
+**The Next-Generation Universal Linux Package Engine & Interactive TUI**
+
+*Unified Package Discovery, Declarative Recipes, and Automated Fallback Across Any Linux Distribution.*
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://python.org)
+[![Go: 1.21+](https://img.shields.io/badge/Go-1.21%2B-00ADD8.svg?logo=go&logoColor=white)](https://golang.org)
+[![Tests: Passing (51/51)](https://img.shields.io/badge/Tests-51%20Passing-brightgreen.svg)]()
+[![Platform: Linux](https://img.shields.io/badge/Platform-Arch%20%7C%20Pop!__OS%20%7C%20Ubuntu%20%7C%20Debian%20%7C%20Fedora%20%7C%20openSUSE-E95420.svg)]()
+
+<br/>
+
 <p align="center">
-  <b>This project is now OFFICIALLY accepted for:</b>
+  <b>Accepted for Open Source Programmes:</b><br/>
+  <a href="https://gssoc.girlscript.tech/">
+    <img src="assets/gssoc.png" alt="GSSoC Banner" width="600"/>
+  </a>
 </p>
 
-<div align="center">
-  
-![GSSoC Banner](assets/gssoc.png)
+[Quick Start](#-quick-start) •
+[Interactive TUI](#-interactive-terminal-ui-tui) •
+[Architecture](#-system-architecture) •
+[Declarative Recipes](#-declarative-recipes) •
+[CLI Reference](#-cli-command-reference) •
+[Contributing](#-contributing) •
+[Discord Community](#-community)
 
 </div>
 
+---
 
-# Arjax
+## 🌟 Overview
 
-**Arjax** (previously **archpkg-helper**) is now in version 2. It is a cross-distribution package discovery and installation tool for Linux. It separates package search from installation and uses a **provider-based architecture** to install software from native repositories, vendor installers, GitHub releases, Flatpak, Snap, and AppImages through declarative YAML recipes.
+**Arjax** is a fast, intelligent, cross-distribution package manager bridge designed for Linux. It eliminates the frustration of fragmented Linux packaging formats by unifying **native repositories (APT, Pacman, DNF, Zypper)**, **AUR**, **Flatpak**, **Snap**, and **GitHub Releases / AppImages** under a single, cohesive interface.
 
-## Table of Contents
+Whether you run **Pop!_OS**, **Ubuntu**, **Arch Linux**, **Fedora**, or **openSUSE**, Arjax automatically resolves packages through a prioritized provider chain, builds missing packages, or downloads native AppImages without requiring manual repository management or GitHub release scraping.
 
-- [About](#about)
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Usage](#usage)
-  - [Search](#search)
-  - [Install](#install)
-  - [How Installation Works](#how-installation-works)
-  - [Provider Priority](#provider-priority)
-  - [Debug / Verbose Mode](#debug--verbose-mode)
-  - [Other Commands](#other-commands)
-- [Recipes](#recipes)
-- [Adding a New Package](#adding-a-new-package)
-- [🏗️ Architecture](#️-architecture)
-- [🔄 Auto-Update System](#-auto-update-system)
-- [File Structure](#file-structure)
-- [Contributing](#contributing)
-- [🛣️ Roadmap](#️-roadmap)
-- [License](#license)
+### Why Arjax?
+
+* **Default Modern TUI**: Run `arjax` to launch a keyboard- and mouse-driven dual-pane terminal interface with real-time search feedback, dependency trees, and instant action buttons.
+* **Separation of Concerns**: Package search is **100% read-only and safe**; installation is isolated in a separate, timed, step-based orchestration engine with transaction rollback.
+* **Zero-Code Declarative Recipes**: Add support for complex software (like `zapfast`, `brave`, `vscode`, `docker`) using pure YAML recipes—no Python or Go code required.
+* **Intelligent Fallback Chain**: If a package is absent from your distribution's native repository, Arjax seamlessly discovers GitHub releases, extracts AppImages, marks them executable in `~/.local/bin`, and registers desktop launcher shortcuts automatically.
+* **System Health & Maintenance**: Includes transaction history logging, DAG-based orphaned package cleanup, disk cache analyzers, and snapshot rollbacks.
 
 ---
 
-## About
+## 🖥️ Interactive Terminal UI (TUI)
 
-Arjax works across Linux distributions. It detects your system automatically and chooses the best available installation method. Search is always **read-only** — it only displays results. The `install` command drives a separate pipeline that resolves the package through a prioritised provider chain, checks dependencies, and performs the installation with step-by-step progress output.
+Arjax launches its modern **Textual Terminal User Interface by default**. Simply execute `arjax` in your terminal.
 
----
-
-## Features
-
-### Installation Engine
-- **Provider-based installation engine** — tries providers in priority order, falls back automatically
-- **Declarative YAML recipes** — add new packages by writing a recipe file, no Python required
-- **Native repository installation** — pacman, AUR (via paru), apt, dnf, zypper
-- **Vendor installer support** — custom package-manager mappings per recipe
-- **GitHub release installation** — download and install AppImage or source releases
-- **Flatpak support** — install from Flathub or any configured remote
-- **Snap support** — install from the Snap Store
-- **AppImage support** — download, mark executable, and link to `~/.local/bin`
-- **Step-based progress output** — resolving, selecting, checking dependencies, installing — with exact timings
-- **Spinner + status indicators** — green ✓ success, yellow ⚠ warning, red ✗ failure, cyan ℹ info
-- **Download progress bar** — byte-level progress for GitHub/AppImage downloads
-- **Installation summary** — package, provider, total time, status
-
-### Search
-- Cross-distro package search: pacman, AUR, apt, dnf, zypper, Flatpak, Snap
-- Intelligent query matching and normalisation
-- AUR trust scores (votes, popularity, age)
-- Search is separated from installation — results are read-only
-
-### GUI & Tools
-- **Native Desktop GUI** — professional PyQt5 interface with dark theme
-- **Purpose-based suggestions** — `arjax suggest "video editing"` recommends apps by use case
-- **Batch installation** — install multiple packages with progress tracking
-- **Auto-update system** — background checking, secure downloads, user approval
-- **Arch maintenance** — orphan cleanup, cache cleanup, snapshot management, Arch news
-
----
-
-## Quick Start
-
-```sh
-# Clone & install
-git clone https://github.com/AdmGenSameer/arjax.git
-cd arjax
-bash install.sh
-
-# Launch interactive TUI (Default)
+```bash
+# Launch interactive TUI (Default mode)
 arjax
 
-# Or use CLI commands directly
-arjax search firefox
-arjax install firefox
+# Or explicitly via flag or subcommand
+arjax --tui
+arjax tui
 ```
 
-Or directly from the web:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/AdmGenSameer/arjax/main/install.sh | bash
 ```
+┌───────────────────────────────────────────────────────────── arjax ─────────────────────────────────────────────────────────────┐
+│ 🔍 [ Search packages (e.g. zapfast, firefox, vlc) — Press Enter or pause to search...                     ]                     │
+├──────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────┤
+│ SEARCH RESULTS                                               │ PACKAGE DETAILS & DEPENDENCY TREE                                │
+│ 📦 zapfast (recipe (repository, github, appimage)) latest    │ Name:        zapfast                                             │
+│ 📦 zapfast-bin (pacman)                                      │ Provider:    recipe (repository, github, appimage)               │
+│ 📦 zapfast-git (pacman)                                      │ Version:     latest                                              │
+│                                                              │ Repository:  arjax-recipes                                       │
+│                                                              │ Description: Fast native WhatsApp client built with Rust & egui  │
+│                                                              │                                                                  │
+│                                                              │ 📦 zapfast (latest)                                              │
+│                                                              │  ├── 🔗 Provider Strategy: repository (paru: zapfast)            │
+│                                                              │  ├── 🔗 Provider Strategy: github (crmne/zapfast)                │
+│                                                              │  └── 🔗 Provider Strategy: appimage (zapfast-x86_64.AppImage)    │
+│                                                              │                                                                  │
+│                                                              │ [ Install (i) ]       [ Remove (r) ]                             │
+├──────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────┤
+│ ✔ Found 3 package(s) for 'zapfast'. Press [i] to Install, [r] to Remove.                                                        │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key TUI Features
+
+1. **Live Typing Feedback & Dual-Search**:
+   * **Typing Indication**: Immediate visual indication in the status bar while typing (`⌨ Typing: 'zapfast'`).
+   * **Debounce Auto-Search**: Pausing for **0.5s** triggers auto-search automatically—no need to press Enter!
+   * **Instant Enter Search**: Pressing `Enter` bypasses the debounce timer and triggers immediate search.
+   * **Active Search Loading**: Shows `⏳ Searching for 'query'...` during background queries across native repos, recipes, and remotes.
+2. **Mouse-Clickable & Keyboard-Wired Buttons**:
+   * Click **`[ Install (i) ]`** or press `i` to trigger orchestrator installation.
+   * Click **`[ Remove (r) ]`** or press `r` to safely uninstall packages and remove AppImage launchers.
+3. **Real-Time Dependency & Strategy Tree**:
+   * Arrow keys (`↑`/`↓`) navigate results and immediately update package descriptions, dependency hierarchies, and recipe multi-provider strategies.
+4. **Shortcut Navigation Matrix**:
+
+| Key | Action | Description |
+| :---: | :--- | :--- |
+| `/` | **Focus Search** | Move focus directly to the search input bar |
+| `i` | **Install Package** | Install the currently highlighted package via orchestrator |
+| `r` | **Remove Package** | Uninstall package and remove desktop launcher files |
+| `d` | **Focus Tree** | Focus and navigate the dependency / provider strategy tree |
+| `h` | **History** | Display transaction audit log with timing benchmarks |
+| `o` | **Orphan Scan** | Scan orphaned packages via DAG dependency analysis |
+| `s` | **System Dashboard**| View disk usage, package cache metrics, and health diagnostics |
+| `u` | **Sync Recipes** | Synchronize declarative recipes from the central registry |
+| `q` / `Ctrl+C` | **Quit** | Exit the TUI session cleanly |
+
+> 📖 **Read the full TUI guide in [`docs/TUI_GUIDE.md`](./docs/TUI_GUIDE.md).**
 
 ---
 
-## Installation
+## ⚡ Quick Start
 
-The installer creates a private virtual environment, installs Arjax and its GUI dependencies, drops a launcher in `~/.local/bin`, and registers a desktop entry on graphical systems.
+### 1-Line Installation (Recommended)
 
-### Recommended: install.sh
+Run the automated installer to scaffold a dedicated virtual environment, install CLI/TUI entrypoints, and register desktop shortcuts:
 
-```sh
-git clone https://github.com/AdmGenSameer/arjax.git
-cd arjax
+```bash
+curl -fsSL https://raw.githubusercontent.com/AdmGenSameer/archpkg-helper/main/install.sh | bash
+```
+
+### Manual Installation
+
+Clone the repository and install using `uv` (or standard `pip`):
+
+```bash
+# 1. Clone repository
+git clone https://github.com/AdmGenSameer/archpkg-helper.git
+cd archpkg-helper
+
+# 2. Run installer script
 bash install.sh
+
+# 3. Or install into an active virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
-### Alternative: manual venv
+### Quick Verification
 
-```sh
-git clone https://github.com/AdmGenSameer/arjax.git
-cd arjax
-python3 -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install .
-.venv/bin/pip install PyQt5
+```bash
+# Verify installation and view detected distribution
+arjax stats
+
+# Search for a package (CLI output)
+arjax search zapfast
+
+# Install a package via orchestrator
+arjax install zapfast
 ```
 
 ---
 
-## Usage
+## 🏗️ System Architecture
 
-### Search
+Arjax utilizes a decoupled, high-performance architecture separating user interaction, orchestration, and provider execution.
 
-Search is **read-only**. It displays available packages but does not install anything.
+```mermaid
+flowchart TD
+    subgraph UI["User Interaction Layer"]
+        TUI["Interactive TUI (Textual / Bubbletea)"]
+        CLI["Command-Line Interface (Typer)"]
+        GUI["Desktop GUI (PyQt5)"]
+    end
 
-```sh
-# Basic search
-arjax search firefox
+    subgraph Core["Orchestration & Logic Layer"]
+        Router{"Request Router"}
+        RO["Search Engine (Read-Only)"]
+        Orch["Installation Orchestrator"]
+        Store["Recipe Store (YAML Loader)"]
+        Hist["Transaction Manager (SQLite/Log)"]
+        Orphan["DAG Orphan Analyzer"]
+    end
 
-# Multi-word search
-arjax search visual studio code
+    subgraph Engine["Provider Engine Bridge"]
+        Bridge["GoProviderEngine / Python Fallback"]
+        Cache["LRU Cache & TTL Manager"]
+    end
 
-# Sort AUR results
-arjax search neovim --aur-sortby popularity
+    subgraph Providers["Execution Providers"]
+        P1["Repository Provider (APT / Pacman / DNF / Zypper)"]
+        P2["AUR Provider (RPC v5 / Paru)"]
+        P3["Flatpak Provider (Flathub CLI)"]
+        P4["Snap Provider (Snapd REST / CLI)"]
+        P5["GitHub & AppImage Provider (~/.local/bin)"]
+    end
 
-# Limit results
-arjax search git --limit 10
+    UI --> Router
+    Router -->|search query| RO
+    Router -->|install/remove| Orch
+    Router -->|history/audit| Hist
+    Router -->|diagnostics| Orphan
 
-# Skip cache
-arjax search brave --no-cache
+    RO --> Store
+    RO --> Bridge
+    Orch --> Store
+    Orch --> Bridge
+
+    Bridge --> Cache
+    Bridge --> P1
+    Bridge --> P2
+    Bridge --> P3
+    Bridge --> P4
+    Bridge --> P5
 ```
 
-### Install
+### The 4-Step Installation Pipeline
 
-`install` is the separate command that drives the provider engine.
-
-```sh
-# Install using the default provider chain
-arjax install brave
-
-# Install using a specific provider
-arjax install vscode --provider vendor
-arjax install signal --provider flatpak
-arjax install helix --provider github
-
-# Debug mode: prints the exact command being executed
-arjax install brave --debug
-```
-
-> **Note:** `search` and `install` are intentionally separate. Searching never modifies your system.
-
-### How Installation Works
-
-When you run `arjax install <package>`:
-
-```
-User
-  │
-  ▼
-arjax install <package>
-  │
-  ▼
-Recipe lookup (arjax/recipes/<package>.yaml)
-  │
-  ▼
-InstallationOrchestrator
-  │
-  ▼
-ProviderManager (tries providers in priority order)
-  │
-  ├── repository   → native PM (pacman/apt/dnf/zypper)
-  ├── vendor       → recipe-specified package manager / URL
-  ├── github       → GitHub release download
-  ├── flatpak      → Flatpak install
-  ├── snap         → Snap install
-  └── appimage     → download AppImage → ~/.local/bin
-```
-
-The first provider that **succeeds** is used. Skipped and failed providers are reported in the terminal output.
-
-**Example terminal output:**
+Whenever `arjax install <package>` or the TUI Install action is triggered, Arjax executes a deterministic, 4-stage pipeline with millisecond benchmarking:
 
 ```
 ╭────────────────── Arjax ──────────────────╮
-│ Package : brave                           │
+│ Package : zapfast                         │
 │ Action  : Install                         │
 ╰───────────────────────────────────────────╯
 
 ▶ Resolving package...
-✓ Found recipe: brave
+✓ Found recipe: zapfast (WhatsApp Client)
 
 ▶ Selecting provider...
-  repository   ...... selected
-  vendor       ...... queued (fallback)
+  repository   ...... not supported
   github       ...... queued (fallback)
-  flatpak      ...... not supported
+  appimage     ...... selected
+  flatpak      ...... queued (fallback)
   snap         ...... not supported
-  appimage     ...... not supported
 
-▶ Checking dependencies for repository...
+▶ Checking dependencies for appimage...
 ✓ Dependencies ready
 
-▶ Running installation via repository...
-✓ Successfully installed brave via repository
+▶ Running installation via appimage...
+✓ Successfully installed zapfast via appimage to ~/.local/bin/zapfast
+✓ Created desktop launcher at ~/.local/share/applications/zapfast.desktop
 
 Installation Complete
 ───────────────────────────────────────
-Resolving recipe.......... 210 ms
-Selecting provider........ 2 ms
-Checking dependencies..... 8 ms
-Installing............... 14.32 s
-Total.................... 14.55 s
+Resolving recipe.......... 18 ms
+Selecting provider........ 4 ms
+Checking dependencies..... 2 ms
+Installing............... 1.42 s
+Total.................... 1.44 s
 ───────────────────────────────────────
-Package : brave
-Provider: repository
-Time    : 14.55 s
+Package : zapfast
+Provider: appimage
+Time    : 1.44 s
 Status  : Success
 ```
 
-### Provider Priority
-
-Providers are tried in this order. The first one that **supports** the package and **succeeds** is used:
-
-| Priority | Provider     | Description |
-|----------|--------------|-------------|
-| 1        | `repository` | Native package manager (pacman, apt, dnf, zypper) |
-| 2        | `vendor`     | Vendor-specified package manager or custom mapping |
-| 3        | `github`     | GitHub release (AppImage or source build) |
-| 4        | `flatpak`    | Flatpak (requires Flatpak installed) |
-| 5        | `snap`       | Snap (requires snapd installed) |
-| 6        | `appimage`   | Direct AppImage download |
-
-You can force a specific provider with `--provider <name>`.
-
-### Debug / Verbose Mode
-
-```sh
-arjax install <package> --debug
-```
-
-In debug mode, arjax prints the exact command being run, e.g.:
-
-```
-$ paru -S brave-bin
-```
-
-### Other Commands
-
-```sh
-# Purpose-based app suggestions
-arjax suggest "video editing"
-arjax suggest coding
-arjax suggest --list           # list all available purposes
-
-# GUI
-arjax gui                      # launch the desktop GUI
-
-# Updates
-arjax update                   # install all tracked updates
-arjax update --check-only      # check without installing
-
-# Interactive TUI Mode
-arjax tui                      # launch Ratatui-style interactive terminal interface
-                               # Hotkeys: [d] Deps [h] History [o] Orphans [s] Stats [u] Sync Recipes
-
-# Parallel Package Installation
-arjax install pkg1 pkg2 pkg3   # Install multiple packages concurrently with progress bars
-
-# Declarative Recipe Auto-Update & Sync
-arjax recipes list             # View local vs upstream recipe versions
-arjax recipes sync             # Auto-pull recipe updates from central registry
-
-# Transaction History & Rollback
-arjax history list             # Inspect past install/remove transactions with timings
-arjax history rollback <tx_id> # Rollback previous state transaction
-
-# DAG-Based Orphan Cleanup
-arjax cleanup orphans          # Scan and remove unused orphan packages via DAG analysis
-arjax cleanup orphans --dry-run # Preview orphans without removing
-
-# System Statistics & Diagnostics Dashboard
-arjax stats                    # View disk usage, package counts, updates & health alerts
-
-# Shell Autocompletion
-arjax completion install bash  # Install autocompletions for bash, zsh, or fish
-arjax completion show zsh      # Print autocompletion script
-
-# Man Page
-man arjax                      # View official troff manual page
-
-# Configuration
-arjax config --list
-arjax config auto_update_enabled true
-
-# Background service
-arjax service start
-arjax service stop
-arjax service status
-
-# Tracked packages
-arjax list-installed
-
-# Arch maintenance
-arjax cleanup cache
-arjax snapshot create --comment "Before update"
-arjax snapshot list
-arjax update --news-only
-
-# Self-upgrade
-arjax upgrade
-```
-
 ---
 
-## Recipes
+## 📖 Declarative Recipes
 
-Packages are described using **declarative YAML recipes** stored in `arjax/recipes/`. A recipe declares available providers and their metadata. **Recipes contain no executable code** — they are pure data.
+Arjax decouples software specifications from executable code using **declarative YAML recipes**. Recipes reside in `arjax/recipes/` (and user overrides in `~/.config/arjax/recipes/`).
 
-### Recipe structure
+### Example: WhatsApp Native Client (`zapfast.yaml`)
 
 ```yaml
-name: brave
-description: Brave Browser - privacy-focused web browser
+name: zapfast
+display_name: ZapFast
+description: Fast native WhatsApp client built with Rust and egui
+aliases:
+  - zapfast
+  - whatsapp
 
 providers:
   repository:
-    package: brave-bin
-    package_manager: pacman   # optional override
-
-  vendor:
-    package: brave-browser
-    package_manager: apt      # for Debian-based systems
-
-  flatpak:
-    flatpak_id: com.brave.Browser
-
+    package: zapfast
+    package_manager: paru
   github:
-    github_repo: brave/brave-browser
-    github_install_type: source
+    github_repo: crmne/zapfast
+  appimage:
+    appimage_url: https://github.com/crmne/zapfast/releases/download/v0.21.1/zapfast-0.21.1-x86_64.AppImage
+    appimage_name: zapfast
 ```
 
-Each provider block is optional. At runtime, `ProviderManager` checks which providers a recipe declares support for, then tries them in priority order.
+### Adding a New Recipe in 60 Seconds
 
-### Example recipes
+1. Create `arjax/recipes/<package_name>.yaml`.
+2. Specify package metadata and provider mappings (native packages, Flathub IDs, GitHub release URLs, or direct AppImages).
+3. Test your recipe immediately:
+   ```bash
+   arjax install <package_name>
+   ```
 
+> 📖 **Read the complete specification in [`docs/RECIPES_SPEC.md`](./docs/RECIPES_SPEC.md).**
+
+---
+
+## 💻 CLI Command Reference
+
+### Package Operations
+
+```bash
+# 1. Search packages (read-only, across all providers)
+arjax search firefox
+arjax search "video editor" --limit 10
+arjax search neovim --aur-sortby votes
+
+# 2. Install package(s)
+arjax install brave
+arjax install zapfast
+arjax install vlc gimp htop      # Parallel multi-package installation
+
+# 3. Explicit provider targeting
+arjax install signal --provider flatpak
+arjax install vscode --provider vendor
+arjax install helix --provider github
+
+# 4. Purpose-based software discovery
+arjax suggest "video editing"
+arjax suggest coding
+arjax suggest --list             # List all available purpose categories
 ```
-arjax/recipes/
-├── brave.yaml
-├── docker.yaml
-└── vscode.yaml
+
+### Maintenance, History & Cleanup
+
+```bash
+# 1. System health and resource telemetry
+arjax stats
+
+# 2. Transaction history & Rollback
+arjax history list               # View chronological audit trail with durations
+arjax history rollback <tx_id>   # Revert an installation or removal transaction
+
+# 3. DAG-based orphaned package cleanup
+arjax cleanup orphans --dry-run  # Preview unneeded dependency trees
+arjax cleanup orphans            # Safely purge orphaned packages
+
+# 4. Cache maintenance
+arjax cleanup cache              # Reclaim disk space from cached package downloads
+
+# 5. Declarative recipe auto-sync
+arjax recipes list               # Compare local recipes against upstream registry
+arjax recipes sync               # Pull and update latest community recipes
 ```
 
 ---
 
-## Adding a New Package
+## 🐧 Distribution Support Matrix
 
-Most new packages can be supported **without writing any Python code**. Just add a recipe file.
+Arjax automatically identifies your host operating system and routes commands to native tools:
 
-1. Create `arjax/recipes/<package>.yaml`
-2. Declare which providers it supports and any metadata they need
-3. Test: `arjax install <package>`
+| Distribution Family | Primary Package Manager | Secondary / Fallback | Universal & Binary Support |
+| :--- | :--- | :--- | :--- |
+| **Arch Linux / Manjaro** | `pacman` | `paru` / `yay` (AUR) | Flatpak, Snap, AppImage |
+| **Pop!_OS / Ubuntu / Debian** | `apt` / `apt-get` | PPA / Vendor repositories | Flatpak, Snap, AppImage |
+| **Fedora / RHEL / CentOS** | `dnf` | RPM fallback | Flatpak, Snap, AppImage |
+| **openSUSE / SLES** | `zypper` | OBS (Open Build Service) | Flatpak, Snap, AppImage |
 
-Example — adding Signal:
+### Testing in Docker (Pop!_OS / Ubuntu)
 
-```yaml
-name: signal
-description: Signal - private messenger
+You can easily verify Arjax inside an isolated container:
 
-providers:
-  flatpak:
-    flatpak_id: org.signal.Signal
-
-  snap:
-    snap_id: signal-desktop
-```
-
-If the package is in the native repo without special naming, no recipe is needed at all — the `repository` provider falls back to the package name you typed.
-
----
-
-## 🏗️ Architecture
-
-```
-arjax/
-├── interfaces/
-│   ├── cli.py           # Typer CLI entrypoint
-│   └── gui.py           # PyQt5 GUI entrypoint
-│
-├── installation/
-│   ├── orchestrator.py  # Step-based install flow + rich output
-│   ├── providers.py     # All provider implementations + ProviderManager
-│   ├── recipes.py       # YAML recipe loading
-│   └── models.py        # ProviderResult, Recipe, ProviderConfig dataclasses
-│
-├── search/
-│   ├── aur.py           # AUR search
-│   ├── pacman.py        # pacman search
-│   ├── apt.py           # apt-cache search
-│   ├── dnf.py           # dnf search
-│   ├── zypper.py        # zypper search
-│   ├── flatpak.py       # Flatpak search
-│   ├── snap.py          # Snap search
-│   └── ranking.py       # Scoring and deduplication
-│
-├── package_management/
-│   ├── command_gen.py   # Install command generation
-│   ├── installed.py     # Installed package tracking
-│   ├── update.py        # Update logic
-│   └── snapshot.py      # Snapshot management
-│
-├── integrations/
-│   ├── github.py        # GitHub release/source installer
-│   ├── cache.py         # Search result caching
-│   ├── security.py      # AUR trust scoring
-│   └── pkgs_org.py      # Cross-distro package lookup
-│
-├── intelligence/
-│   ├── advisor.py       # AI-assisted package advice
-│   └── suggest.py       # Purpose-based app suggestions
-│
-├── config/
-│   ├── base.py          # Distro detection and constants
-│   ├── manager.py       # User config (~/.arjax/)
-│   └── logging.py       # Centralised logging
-│
-├── recipes/
-│   ├── brave.yaml
-│   ├── docker.yaml
-│   ├── vscode.yaml
-│   └── zapfast.yaml
-│
-└── system/
-    └── monitor.py       # Background monitoring service
-```
-
-### Key design decisions
-
-- **Search is read-only.** The `search` command never modifies your system.
-- **Installation is independent.** `install` goes through `InstallationOrchestrator` → `ProviderManager` → individual providers.
-- **Recipes are data, not code.** They describe packages declaratively. The engine decides what to do.
-- **Providers are independent.** Each provider (`RepositoryProvider`, `FlatpakProvider`, etc.) implements a clean interface and can be tested in isolation.
-
----
-
-## 🔄 Auto-Update System
-
-Arjax includes a background update system with secure downloads, integrity validation, and user approval.
-
-### Commands
-
-```sh
-# Enable auto-updates
-arjax config auto_update_enabled true
-
-# Start background service
-arjax service start
-
-# Check for updates
-arjax update --check-only
-
-# Install all updates
-arjax update
-
-# View tracked packages
-arjax list-installed
-```
-
-### Configuration
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `auto_update_enabled` | Enable update checking | `false` |
-| `auto_install_updates` | Install without prompting | `false` |
-| `update_check_interval_hours` | Hours between checks | `24` |
-| `max_concurrent_downloads` | Max simultaneous downloads | `3` |
-
----
-
-## File Structure
-
-```
-arjax/
-├── .github/                   # Issue templates, PR template
-├── arjax/                     # Core Python package
-│   ├── installation/          # Provider-based install engine
-│   │   ├── orchestrator.py    # Step-based install flow
-│   │   ├── providers.py       # Provider implementations
-│   │   ├── recipes.py         # YAML recipe loader
-│   │   └── models.py          # Data models
-│   ├── interfaces/            # CLI and GUI entrypoints
-│   ├── search/                # Per-PM search backends
-│   ├── package_management/    # Command generation and tracking
-│   ├── integrations/          # GitHub, cache, security, pkgs.org
-│   ├── intelligence/          # Suggestions and AI advisor
-│   ├── config/                # Logging, user config, distro detection
-│   ├── recipes/               # YAML recipe files
-│   └── system/                # Background monitor
-├── tests/                     # Unit tests
-├── systemd/                   # Systemd service and timer
-├── data/                      # purpose_mapping.yaml
-├── assets/                    # Images for README
-├── install.sh                 # One-command installer
-├── pyproject.toml             # Build metadata
-└── README.md
+```bash
+docker run -it --rm popcon:latest bash -c "arjax --help && arjax stats"
 ```
 
 ---
 
-## Contributing
+## 🧪 Development & Testing
 
-Contributions are welcome!
+Arjax maintains strict quality standards with **100% test pass rates** and **Flake8 compliance**.
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-branch`
-3. Make your changes and commit: `git commit -m "Describe your changes"`
-4. Push to your fork: `git push origin feature-branch`
-5. Open a Pull Request
+```bash
+# Run the complete test suite (51 unit and async TUI tests)
+uv run --with pytest-asyncio pytest
 
-Report bugs or request features via the [issue tracker](https://github.com/AdmGenSameer/arjax/issues).
+# Run style and PEP8 validation
+uv run --with flake8 flake8 arjax/ tests/
 
-### Adding packages via recipes
-
-The easiest contribution is adding YAML recipes for packages not yet supported. See [Adding a New Package](#adding-a-new-package) for the format.
-
-### Contributing to purpose mappings
-
-The purpose-based suggestions are powered by `data/purpose_mapping.yaml`. To contribute:
-
-1. Edit the file to add new purposes, apps, or synonyms
-2. Test with `arjax suggest "your-purpose"`
-3. Submit a Pull Request
+# Compile the optional high-performance Go Provider Engine
+cd arjax-provider-engine
+go build -o bin/arjax-provider main.go
+go test ./...
+```
 
 ---
 
-## 🛣️ Roadmap
+## 🤝 Contributing
 
-- ✅ Provider-based installation engine
-- ✅ Declarative YAML recipe system
-- ✅ Step-based progress output with timers
-- ✅ Spinner and rich terminal output
-- ✅ GitHub release / AppImage download with progress bar
-- ✅ openSUSE (zypper) support
-- ✅ Native desktop GUI (PyQt5)
-- ✅ Auto-update system
-- ⏳ More YAML recipes for popular packages
-- ⏳ Community-maintained recipe repository
-- ⏳ Plugin/provider SDK for third-party providers
-- ⏳ Automatic recipe updates from a central registry
-- ⏳ Interactive TUI mode (`arjax interactive`)
+We welcome contributions from developers of all skill levels! Whether you want to add a new YAML recipe, improve TUI widgets, or add support for another distro:
+
+1. **Fork the repository** on GitHub.
+2. **Create a branch**: `git checkout -b feature/amazing-feature`.
+3. **Commit your changes**: `git commit -m "feat: add support for new feature"`.
+4. **Verify tests pass**: `uv run --with pytest-asyncio pytest`.
+5. **Push and open a Pull Request**.
+
+Please review our [Contributing Guide](./CONTRIBUTING.md) and [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ---
 
-<h2 align="center">💬 Join Our Community on Discord</h2>
+## 💬 Community
 
-<p align="center">
+Have questions, suggestions, or need help? Join our community:
+
+<div align="center">
   <a href="https://discord.gg/bN7ycNdCR">
-    <img src="assets/joinDiscordIcon.png" alt="Admin Discord" width="500"/>
+    <img src="assets/joinDiscordIcon.png" alt="Join Arjax Discord" width="400"/>
   </a>
-</p>
+</div>
 
 ---
 
-## License
+## 📄 License
 
-This project is licensed under the [Apache License 2.0](./LICENSE).
+Arjax is licensed under the **[Apache License 2.0](./LICENSE)**. Free and open source software for everyone.
