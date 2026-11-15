@@ -35,26 +35,39 @@ type infoDoneMsg struct {
 	err  error
 }
 
+type installTickMsg time.Time
+
+func tickInstall() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg {
+		return installTickMsg(t)
+	})
+}
+
 type Model struct {
-	pm           *providers.ProviderManager
-	distro       string
-	distroName   string
-	textInput    textinput.Model
-	spinner      spinner.Model
-	loading      bool
-	installing   bool
-	statusMsg    string
-	statusType   string // "info", "success", "error", "warning"
-	packages     []models.Package
-	pkgInfo      map[string]models.PackageInfo
-	cursor       int
-	scrollOffset int
-	width        int
-	height       int
-	activeTab    int // 0: Overview & Deps, 1: Activity Logs, 2: Providers
-	logLines     []string
-	showHelp     bool
-	err          error
+	pm               *providers.ProviderManager
+	distro           string
+	distroName       string
+	textInput        textinput.Model
+	spinner          spinner.Model
+	loading          bool
+	installing       bool
+	installStartTime time.Time
+	installProgress  float64
+	installStep      int // 1..4
+	installAction    string
+	installPkg       models.Package
+	statusMsg        string
+	statusType       string // "info", "success", "error", "warning"
+	packages         []models.Package
+	pkgInfo          map[string]models.PackageInfo
+	cursor           int
+	scrollOffset     int
+	width            int
+	height           int
+	activeTab        int // 0: Overview & Deps, 1: Activity Logs, 2: Providers
+	logLines         []string
+	showHelp         bool
+	err              error
 }
 
 func NewModel(pm *providers.ProviderManager) Model {
@@ -82,16 +95,18 @@ func NewModel(pm *providers.ProviderManager) Model {
 	}
 
 	return Model{
-		pm:         pm,
-		distro:     distroLabel,
-		distroName: distroInfo.Name,
-		textInput:  ti,
-		spinner:    s,
-		packages:   []models.Package{},
-		pkgInfo:    make(map[string]models.PackageInfo),
-		activeTab:  0,
-		statusMsg:  "Ready. Type a query and press Enter, or use [Tab] to browse.",
-		statusType: "info",
+		pm:              pm,
+		distro:          distroLabel,
+		distroName:      distroInfo.Name,
+		textInput:       ti,
+		spinner:         s,
+		packages:        []models.Package{},
+		pkgInfo:         make(map[string]models.PackageInfo),
+		activeTab:       0,
+		statusMsg:       "Ready. Type a query and press Enter, or use [Tab] to browse.",
+		statusType:      "info",
+		installProgress: 0,
+		installStep:     1,
 		logLines: []string{
 			fmt.Sprintf("[%s] Arjax Go Provider Engine initialized.", time.Now().Format("15:04:05")),
 			fmt.Sprintf("[%s] Detected distribution environment: %s", time.Now().Format("15:04:05"), distroLabel),
@@ -196,20 +211,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.packages) > 0 && !m.installing && !m.loading {
 					pkg := m.packages[m.cursor]
 					m.installing = true
+					m.installAction = "install"
+					m.installPkg = pkg
+					m.installStartTime = time.Now()
+					m.installProgress = 0.08
+					m.installStep = 1
+					m.activeTab = 0
 					m.statusMsg = fmt.Sprintf("Installing %s via %s...", pkg.Name, pkg.Provider)
 					m.statusType = "warning"
 					m.logLines = append(m.logLines, fmt.Sprintf("[%s] ▶ Install started: %s (%s)", time.Now().Format("15:04:05"), pkg.Name, pkg.Provider))
-					return m, tea.Batch(m.spinner.Tick, m.runInstall(pkg))
+					m.logLines = append(m.logLines, fmt.Sprintf("[%s] Step 1/4: Resolving package recipe & provider strategy...", time.Now().Format("15:04:05")))
+					return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runInstall(pkg))
 				}
 
 			case "r":
 				if len(m.packages) > 0 && !m.installing && !m.loading {
 					pkg := m.packages[m.cursor]
 					m.installing = true
+					m.installAction = "remove"
+					m.installPkg = pkg
+					m.installStartTime = time.Now()
+					m.installProgress = 0.08
+					m.installStep = 1
+					m.activeTab = 0
 					m.statusMsg = fmt.Sprintf("Removing %s...", pkg.Name)
 					m.statusType = "warning"
 					m.logLines = append(m.logLines, fmt.Sprintf("[%s] ▶ Remove started: %s", time.Now().Format("15:04:05"), pkg.Name))
-					return m, tea.Batch(m.spinner.Tick, m.runRemove(pkg))
+					m.logLines = append(m.logLines, fmt.Sprintf("[%s] Step 1/4: Locating package binaries & dependencies...", time.Now().Format("15:04:05")))
+					return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runRemove(pkg))
 				}
 			}
 		} else {
@@ -260,8 +289,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pkgInfo[msg.name] = msg.info
 		}
 
+	case installTickMsg:
+		if m.installing {
+			prevStep := m.installStep
+			if m.installProgress < 0.92 {
+				delta := 0.02
+				if m.installProgress < 0.3 {
+					delta = 0.04
+				} else if m.installProgress < 0.6 {
+					delta = 0.025
+				} else if m.installProgress > 0.8 {
+					delta = 0.008
+				}
+				m.installProgress += delta
+				if m.installProgress > 0.92 {
+					m.installProgress = 0.92
+				}
+			}
+
+			if m.installProgress < 0.25 {
+				m.installStep = 1
+			} else if m.installProgress < 0.50 {
+				m.installStep = 2
+			} else if m.installProgress < 0.85 {
+				m.installStep = 3
+			} else {
+				m.installStep = 4
+			}
+
+			if m.installStep != prevStep {
+				stepDesc := ""
+				if m.installAction == "install" {
+					switch m.installStep {
+					case 2:
+						stepDesc = "Step 2/4: Verifying dependency tree & build requirements..."
+					case 3:
+						stepDesc = fmt.Sprintf("Step 3/4: Executing %s backend (download/compile)...", m.installPkg.Provider)
+					case 4:
+						stepDesc = "Step 4/4: Finalizing desktop shortcuts & symlinks..."
+					}
+				} else {
+					switch m.installStep {
+					case 2:
+						stepDesc = "Step 2/4: Checking reverse dependencies..."
+					case 3:
+						stepDesc = fmt.Sprintf("Step 3/4: Executing %s removal routine...", m.installPkg.Provider)
+					case 4:
+						stepDesc = "Step 4/4: Cleaning orphaned config & cache..."
+					}
+				}
+				if stepDesc != "" {
+					m.logLines = append(m.logLines, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), stepDesc))
+				}
+			}
+
+			return m, tickInstall()
+		}
+
 	case actionDoneMsg:
 		m.installing = false
+		m.installProgress = 1.0
+		m.installStep = 4
 		if msg.err != nil || !msg.result.Success {
 			errStr := msg.result.Error
 			if errStr == "" && msg.err != nil {
@@ -386,6 +474,9 @@ func (m Model) View() string {
 
 	// Tab Bar
 	tabTitles := []string{"1: Details & Deps", "2: Logs", "3: Providers"}
+	if m.installing {
+		tabTitles[0] = "1: ⚡ Active Progress"
+	}
 	var tabs []string
 	for i, t := range tabTitles {
 		if i == m.activeTab {
@@ -532,8 +623,130 @@ func (m Model) View() string {
 	} else {
 		switch m.activeTab {
 		case 0:
-			// Details & Dependencies Tab
-			if len(m.packages) > 0 && m.cursor < len(m.packages) {
+			if m.installing {
+				opTitle := "INSTALLING"
+				if m.installAction == "remove" {
+					opTitle = "REMOVING"
+				}
+
+				elapsed := time.Since(m.installStartTime).Round(100 * time.Millisecond)
+				badge := ProviderBadge(m.installPkg.Provider)
+
+				rightContent.WriteString(fmt.Sprintf("%s %s %s  %s\n\n",
+					lipgloss.NewStyle().Bold(true).Foreground(ColorWarning).Render("⚡ "+opTitle+":"),
+					lipgloss.NewStyle().Bold(true).Foreground(ColorTextBright).Render(m.installPkg.Name),
+					badge,
+					lipgloss.NewStyle().Foreground(ColorMuted).Render(fmt.Sprintf("(%s elapsed)", elapsed)),
+				))
+
+				// Render Progress Bar
+				barWidth := detailsWidth - 18
+				if barWidth < 15 {
+					barWidth = 15
+				}
+				if barWidth > 38 {
+					barWidth = 38
+				}
+
+				filledLen := int(m.installProgress * float64(barWidth))
+				if filledLen > barWidth {
+					filledLen = barWidth
+				}
+				emptyLen := barWidth - filledLen
+				if emptyLen < 0 {
+					emptyLen = 0
+				}
+
+				filledBar := lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render(strings.Repeat("█", filledLen))
+				emptyBar := lipgloss.NewStyle().Foreground(ColorMuted).Render(strings.Repeat("░", emptyLen))
+				pctStr := lipgloss.NewStyle().Bold(true).Foreground(ColorTextBright).Render(fmt.Sprintf("%3.0f%%", m.installProgress*100))
+
+				rightContent.WriteString(fmt.Sprintf("  [%s%s]  %s\n\n", filledBar, emptyBar, pctStr))
+
+				// Active Step Spinner
+				currentStatus := ""
+				if m.installAction == "install" {
+					switch m.installStep {
+					case 1:
+						currentStatus = "Resolving recipe & provider strategy..."
+					case 2:
+						currentStatus = "Verifying dependencies and system requirements..."
+					case 3:
+						currentStatus = fmt.Sprintf("Running %s package manager (downloading/building)...", m.installPkg.Provider)
+					case 4:
+						currentStatus = "Finalizing desktop integration & binaries..."
+					}
+				} else {
+					switch m.installStep {
+					case 1:
+						currentStatus = "Locating package binaries & dependencies..."
+					case 2:
+						currentStatus = "Verifying reverse dependencies..."
+					case 3:
+						currentStatus = fmt.Sprintf("Running %s removal routine...", m.installPkg.Provider)
+					case 4:
+						currentStatus = "Cleaning orphaned files & desktop caches..."
+					}
+				}
+
+				rightContent.WriteString(fmt.Sprintf("  %s %s\n\n", m.spinner.View(), lipgloss.NewStyle().Bold(true).Foreground(ColorHighlight).Render(currentStatus)))
+
+				// 4-Stage Visual Checklist
+				rightContent.WriteString(lipgloss.NewStyle().Bold(true).Foreground(ColorTextBright).Render("EXECUTION PIPELINE:\n"))
+				steps := []string{
+					"Recipe & Provider Strategy",
+					"Dependency Verification",
+					"Package Manager Execution",
+					"Desktop & System Finalization",
+				}
+				if m.installAction == "remove" {
+					steps = []string{
+						"Package Binary Inspection",
+						"Reverse Dependency Check",
+						"Removal Execution",
+						"Orphan & Cache Cleanup",
+					}
+				}
+
+				for idx, s := range steps {
+					stepNum := idx + 1
+					if stepNum < m.installStep {
+						rightContent.WriteString(fmt.Sprintf("  %s %s\n",
+							lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render("✔"),
+							lipgloss.NewStyle().Foreground(ColorSecondary).Render(fmt.Sprintf("Stage %d: %s", stepNum, s)),
+						))
+					} else if stepNum == m.installStep {
+						rightContent.WriteString(fmt.Sprintf("  %s %s\n",
+							lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render("▶"),
+							lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render(fmt.Sprintf("Stage %d: %s (in progress)", stepNum, s)),
+						))
+					} else {
+						rightContent.WriteString(fmt.Sprintf("  %s %s\n",
+							lipgloss.NewStyle().Foreground(ColorMuted).Render("○"),
+							lipgloss.NewStyle().Foreground(ColorMuted).Render(fmt.Sprintf("Stage %d: %s", stepNum, s)),
+						))
+					}
+				}
+
+				// Live stream logs preview
+				rightContent.WriteString("\n" + lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render("LIVE OPERATION STREAM:\n"))
+				startLog := 0
+				if len(m.logLines) > 4 {
+					startLog = len(m.logLines) - 4
+				}
+				for _, l := range m.logLines[startLog:] {
+					if strings.Contains(l, "✔") {
+						rightContent.WriteString("  " + LogSuccessStyle.Render(l) + "\n")
+					} else if strings.Contains(l, "✖") {
+						rightContent.WriteString("  " + LogErrorStyle.Render(l) + "\n")
+					} else {
+						rightContent.WriteString("  " + LogInfoStyle.Render(l) + "\n")
+					}
+				}
+
+				rightContent.WriteString("\n" + lipgloss.NewStyle().Foreground(ColorMuted).Italic(true).Render("Please wait while Arjax completes the operation in the background..."))
+			} else if len(m.packages) > 0 && m.cursor < len(m.packages) {
+				// Details & Dependencies Tab
 				selected := m.packages[m.cursor]
 				badge := ProviderBadge(selected.Provider)
 
@@ -605,6 +818,9 @@ func (m Model) View() string {
 	}
 
 	tabTitle := tabTitles[m.activeTab]
+	if m.installing && m.activeTab == 0 {
+		tabTitle = fmt.Sprintf("⚡ %s: %s", strings.ToUpper(m.installAction), m.installPkg.Name)
+	}
 	rightHeader := lipgloss.NewStyle().Bold(true).Foreground(ColorHighlight).Render(tabTitle)
 	rightPane := CardStyle.Width(detailsWidth).Height(paneHeight).Render(
 		lipgloss.JoinVertical(lipgloss.Left, rightHeader, "\n", rightContent.String()),

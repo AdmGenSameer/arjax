@@ -129,3 +129,64 @@ func TestProviderBadgeColors(t *testing.T) {
 	}
 }
 
+func TestTUIInteractiveInstallProgress(t *testing.T) {
+	m := setupTestModel()
+	m.textInput.Blur()
+	m.packages = []models.Package{
+		{Name: "brave-bin", Version: "1.70", Provider: "aur", Description: "Brave Browser"},
+	}
+
+	// Trigger install with 'i'
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = res.(Model)
+	if cmd == nil {
+		t.Fatal("expected commands returned on install trigger")
+	}
+
+	if !m.installing {
+		t.Errorf("expected installing=true, got false")
+	}
+	if m.installPkg.Name != "brave-bin" {
+		t.Errorf("expected installPkg brave-bin, got %s", m.installPkg.Name)
+	}
+	if m.installProgress <= 0 {
+		t.Errorf("expected initial installProgress > 0, got %f", m.installProgress)
+	}
+
+	// Check View renders interactive live progress
+	view := m.View()
+	if !strings.Contains(view, "INSTALLING") {
+		t.Errorf("expected view to contain 'INSTALLING', got:\n%s", view)
+	}
+	if !strings.Contains(view, "brave-bin") {
+		t.Errorf("expected view to contain 'brave-bin', got:\n%s", view)
+	}
+	if !strings.Contains(view, "EXECUTION PIPELINE") {
+		t.Errorf("expected view to contain 'EXECUTION PIPELINE', got:\n%s", view)
+	}
+
+	// Tick install progress
+	res, _ = m.Update(installTickMsg(time.Now()))
+	m = res.(Model)
+	if m.installProgress <= 0.08 {
+		t.Errorf("expected installProgress to advance on tick, got %f", m.installProgress)
+	}
+
+	// Complete install action
+	res, _ = m.Update(actionDoneMsg{
+		action: "install",
+		result: models.Result{Package: "brave-bin", Provider: "aur", Success: true, DurationMs: 1200},
+	})
+	m = res.(Model)
+	if m.installing {
+		t.Errorf("expected installing=false after actionDoneMsg")
+	}
+	if m.installProgress != 1.0 {
+		t.Errorf("expected installProgress=1.0 after actionDoneMsg, got %f", m.installProgress)
+	}
+	if !strings.Contains(m.statusMsg, "completed") {
+		t.Errorf("expected statusMsg to indicate completion, got: %s", m.statusMsg)
+	}
+}
+
+

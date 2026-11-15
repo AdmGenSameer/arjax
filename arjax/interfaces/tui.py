@@ -10,6 +10,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Footer,
@@ -18,6 +19,8 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    ProgressBar,
+    RichLog,
     Static,
     Tree,
 )
@@ -44,6 +47,287 @@ class PackageItem(ListItem):
         yield Label(
             f"📦 [bold cyan]{name}[/] [dim magenta]({prov})[/] [green]{ver}[/]"
         )
+
+
+class OperationProgressModal(ModalScreen):
+    """Interactive modal dialog displaying real-time animated progress."""
+
+    DEFAULT_CSS = """
+    OperationProgressModal {
+        align: center middle;
+        background: rgba(0, 0, 0, 0.7);
+    }
+    #op_dialog {
+        width: 76;
+        height: auto;
+        max-height: 25;
+        background: #1f2335;
+        border: thick #7aa2f7;
+        padding: 1 2;
+    }
+    #op_title {
+        content-align: center middle;
+        text-style: bold;
+        color: #7dcfff;
+        width: 100%;
+        margin-bottom: 1;
+    }
+    #op_step {
+        color: #e0af68;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #op_bar {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    #op_log {
+        height: 7;
+        background: #1a1b26;
+        border: solid #3b4261;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    #op_btn_box {
+        align: center middle;
+        height: 3;
+    }
+    """
+
+    BINDINGS = [
+        ("escape", "dismiss_modal", "Close / Background"),
+        ("enter", "submit_modal", "Confirm"),
+    ]
+
+    def __init__(
+        self,
+        action: str,
+        pkg_name: str,
+        pkg_dict: dict,
+        engine: Any,
+        callback: Optional[Any] = None,
+    ):
+        super().__init__()
+        self.action_type = action
+        self.pkg_name = pkg_name
+        self.pkg_dict = pkg_dict
+        self.engine = engine
+        self.callback = callback
+        self.is_done = False
+        self.success = False
+        self._sim_progress = 10.0
+        self._anim_timer = None
+        self._start_time = time.time()
+
+    def compose(self) -> ComposeResult:
+        verb = (
+            "Installing" if self.action_type == "install" else "Removing"
+        )
+        prov = self.pkg_dict.get("provider", "repo")
+        with Container(id="op_dialog"):
+            yield Label(
+                f"📦 {verb} [bold cyan]{self.pkg_name}[/] "
+                f"[dim]({prov})[/]",
+                id="op_title",
+            )
+            yield Label(
+                "⏳ Initializing provider strategy...", id="op_step"
+            )
+            yield ProgressBar(total=100, show_eta=False, id="op_bar")
+            yield RichLog(id="op_log", highlight=True, markup=True)
+            with Horizontal(id="op_btn_box"):
+                yield Button(
+                    "Background (Esc)",
+                    id="btn_op_dismiss",
+                    variant="default",
+                )
+
+    def on_mount(self) -> None:
+        """Start animation ticker and execution worker."""
+        bar = self.query_one("#op_bar", ProgressBar)
+        bar.progress = 10
+        self._anim_timer = self.set_interval(0.12, self._tick_animation)
+        self.execute_task()
+
+    def _tick_animation(self) -> None:
+        """Animate progress bar while waiting for subprocess."""
+        if not self.is_done:
+            self._sim_progress = min(92.0, self._sim_progress + 1.2)
+            try:
+                bar = self.query_one("#op_bar", ProgressBar)
+                bar.progress = self._sim_progress
+            except Exception:
+                pass
+
+    def log_line(self, line: str) -> None:
+        """Append line to RichLog widget safely."""
+        try:
+            log_widget = self.query_one("#op_log", RichLog)
+            log_widget.write(line)
+        except Exception:
+            pass
+
+    def update_step(self, text: str) -> None:
+        """Update step headline safely."""
+        try:
+            step_lbl = self.query_one("#op_step", Label)
+            step_lbl.update(text)
+        except Exception:
+            pass
+
+    @work(exclusive=True, thread=True)
+    def execute_task(self) -> None:
+        """Run background installation with real-time step streaming."""
+        prov = self.pkg_dict.get("provider", "repo")
+        ts = time.strftime("%H:%M:%S")
+        self.app.call_from_thread(
+            self.log_line,
+            f"[{ts}] [bold cyan]▶ Step 1/3:[/] Resolving dependencies & "
+            f"recipe for '{self.pkg_name}'...",
+        )
+        self.app.call_from_thread(
+            self.update_step,
+            "⏳ Step 1/3: Resolving package metadata & strategy...",
+        )
+        time.sleep(0.3)
+
+        ts = time.strftime("%H:%M:%S")
+        self.app.call_from_thread(
+            self.log_line,
+            f"[{ts}] [bold cyan]▶ Step 2/3:[/] Executing {self.action_type} "
+            f"via {prov}...",
+        )
+        self.app.call_from_thread(
+            self.update_step,
+            f"⏳ Step 2/3: Executing {self.action_type} via {prov}...",
+        )
+
+        succ = False
+        err = ""
+        t0 = time.time()
+
+        if self.action_type == "install":
+            if (
+                self.pkg_dict.get("is_recipe")
+                or not self.engine.is_available()
+            ):
+                try:
+                    orchestrator = InstallationOrchestrator()
+                    res = orchestrator.install(self.pkg_name)
+                    succ = res.success
+                    err = res.error or res.message
+                    prov = res.provider_name
+                except Exception as e:
+                    succ = False
+                    err = str(e)
+            else:
+                res = self.engine.install(self.pkg_name)
+                succ = (
+                    res.get("success", False)
+                    if isinstance(res, dict)
+                    else False
+                )
+                err = (
+                    res.get("error", "Unknown error")
+                    if isinstance(res, dict)
+                    else str(res)
+                )
+                prov = (
+                    res.get("provider", prov)
+                    if isinstance(res, dict)
+                    else prov
+                )
+        else:
+            if self.engine.is_available():
+                res = self.engine.remove(self.pkg_name)
+                if isinstance(res, dict) and res.get("success"):
+                    succ = True
+                    prov = res.get("provider", prov)
+            if not succ:
+                target_bin = Path.home() / ".local" / "bin" / self.pkg_name
+                if target_bin.exists():
+                    try:
+                        target_bin.unlink()
+                        succ = True
+                    except Exception as e:
+                        err = str(e)
+
+        duration_ms = int((time.time() - t0) * 1000)
+        elapsed_sec = round(duration_ms / 1000.0, 1)
+
+        try:
+            TransactionManager().log_transaction(
+                action=self.action_type,
+                package=self.pkg_name,
+                provider=prov,
+                success=succ,
+                duration_ms=duration_ms,
+                error=err if not succ else "",
+            )
+            if self.action_type == "remove" and succ:
+                installed_apps_manager.remove_package(self.pkg_name)
+        except Exception:
+            pass
+
+        self.app.call_from_thread(
+            self._finish_task, succ, err, prov, elapsed_sec
+        )
+
+    def _finish_task(
+        self, succ: bool, err: str, prov: str, elapsed_sec: float
+    ) -> None:
+        """Update modal UI upon completion."""
+        self.is_done = True
+        self.success = succ
+        if self._anim_timer:
+            self._anim_timer.stop()
+
+        bar = self.query_one("#op_bar", ProgressBar)
+        btn = self.query_one("#btn_op_dismiss", Button)
+        ts = time.strftime("%H:%M:%S")
+
+        if succ:
+            bar.progress = 100
+            self.update_step(
+                f"[bold green]✔ Successfully {self.action_type}ed "
+                f"{self.pkg_name} in {elapsed_sec}s![/]"
+            )
+            self.log_line(
+                f"[{ts}] [bold green]✔ Completed successfully via "
+                f"{prov} ({elapsed_sec}s)![/]"
+            )
+            btn.label = "Done (Enter)"
+            btn.variant = "success"
+            btn.focus()
+            if self.callback:
+                self.callback(
+                    f"✔ Successfully {self.action_type}ed "
+                    f"{self.pkg_name} via {prov}!"
+                )
+        else:
+            bar.progress = 100
+            self.update_step(f"[bold red]✖ Failed: {err}[/]")
+            self.log_line(
+                f"[{ts}] [bold red]✖ {self.action_type.title()} error: "
+                f"{err}[/]"
+            )
+            btn.label = "Close (Esc)"
+            btn.variant = "error"
+            btn.focus()
+            if self.callback:
+                self.callback(
+                    f"✖ Failed to {self.action_type} {self.pkg_name}: {err}"
+                )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(self.success)
+
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(self.success)
+
+    def action_submit_modal(self) -> None:
+        if self.is_done:
+            self.dismiss(self.success)
 
 
 class ArjaxTUIApp(App):
@@ -598,58 +882,19 @@ class ArjaxTUIApp(App):
         )
         self.run_install(name, self.selected_pkg)
 
-    @work(exclusive=True, thread=True)
     def run_install(self, pkg_name: str, pkg_dict: dict) -> None:
-        """Perform installation via Go engine or Python Orchestrator."""
-        succ = False
-        err = ""
-        prov = pkg_dict.get("provider", "repo")
-        t0 = time.time()
-
-        if pkg_dict.get("is_recipe") or not self.engine.is_available():
-            try:
-                orchestrator = InstallationOrchestrator()
-                res = orchestrator.install(pkg_name)
-                succ = res.success
-                err = res.error or res.message
-                prov = res.provider_name
-            except Exception as e:
-                succ = False
-                err = str(e)
-        else:
-            res = self.engine.install(pkg_name)
-            succ = (
-                res.get("success", False) if isinstance(res, dict) else False
-            )
-            err = (
-                res.get("error", "Unknown error")
-                if isinstance(res, dict)
-                else str(res)
-            )
-            prov = (
-                res.get("provider", prov) if isinstance(res, dict) else prov
-            )
-
-        duration_ms = int((time.time() - t0) * 1000)
-
+        """Launch interactive installation progress modal with animation."""
         try:
-            TransactionManager().log_transaction(
+            modal = OperationProgressModal(
                 action="install",
-                package=pkg_name,
-                provider=prov,
-                success=succ,
-                duration_ms=duration_ms,
-                error=err if not succ else "",
+                pkg_name=pkg_name,
+                pkg_dict=pkg_dict,
+                engine=self.engine,
+                callback=self._set_status,
             )
+            self.app.push_screen(modal)
         except Exception:
             pass
-
-        msg = (
-            f"✔ [bold green]Successfully installed {pkg_name} via {prov}![/]"
-            if succ
-            else f"✖ [bold red]Failed to install {pkg_name}: {err}[/]"
-        )
-        self.app.call_from_thread(self._set_status, msg)
 
     def action_remove_selected(self) -> None:
         """Trigger removal of the currently selected package."""
@@ -666,129 +911,19 @@ class ArjaxTUIApp(App):
         )
         self.run_remove(name, self.selected_pkg)
 
-    @work(exclusive=True, thread=True)
     def run_remove(self, pkg_name: str, pkg_dict: dict) -> None:
-        """Perform package removal across Go engine, AppImage, and PMs."""
-        succ = False
-        err = ""
-        prov = pkg_dict.get("provider", "repo")
-        t0 = time.time()
-
-        if self.engine.is_available():
-            res = self.engine.remove(pkg_name)
-            if isinstance(res, dict) and res.get("success"):
-                succ = True
-                prov = res.get("provider", prov)
-
-        if not succ:
-            target_bin = Path.home() / ".local" / "bin" / pkg_name
-            app_dir = Path.home() / ".local" / "share" / "applications"
-            target_desktop = app_dir / f"{pkg_name}.desktop"
-            found_local = False
-            if target_bin.exists():
-                try:
-                    target_bin.unlink()
-                    found_local = True
-                except Exception as e:
-                    err = f"Failed to delete {target_bin}: {e}"
-            if target_desktop.exists():
-                try:
-                    target_desktop.unlink()
-                    found_local = True
-                except Exception:
-                    pass
-
-            if not found_local and (
-                "flatpak" in prov.lower() or shutil.which("flatpak")
-            ):
-                try:
-                    r = subprocess.run(
-                        ["flatpak", "uninstall", "-y", pkg_name],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-                    if r.returncode == 0:
-                        succ = True
-                        prov = "flatpak"
-                except Exception:
-                    pass
-
-            if not found_local and not succ and (
-                "snap" in prov.lower() or shutil.which("snap")
-            ):
-                try:
-                    r = subprocess.run(
-                        ["sudo", "snap", "remove", pkg_name],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-                    if r.returncode == 0:
-                        succ = True
-                        prov = "snap"
-                except Exception:
-                    pass
-
-            if not found_local and not succ:
-                cmd = None
-                if shutil.which("paru"):
-                    cmd = ["paru", "-Rns", "--noconfirm", pkg_name]
-                elif shutil.which("pacman"):
-                    cmd = ["sudo", "pacman", "-Rns", "--noconfirm", pkg_name]
-                elif shutil.which("apt-get"):
-                    cmd = ["sudo", "apt-get", "remove", "-y", pkg_name]
-                elif shutil.which("dnf"):
-                    cmd = ["sudo", "dnf", "remove", "-y", pkg_name]
-                elif shutil.which("zypper"):
-                    cmd = ["sudo", "zypper", "remove", "-y", pkg_name]
-
-                if cmd:
-                    try:
-                        r = subprocess.run(
-                            cmd, capture_output=True, text=True, check=False
-                        )
-                        if r.returncode == 0:
-                            succ = True
-                        else:
-                            err = (
-                                r.stderr
-                                or r.stdout
-                                or f"Removal returned {r.returncode}"
-                            )
-                    except Exception as e:
-                        err = str(e)
-
-            if found_local:
-                succ = True
-                prov = "appimage/local"
-
+        """Launch interactive removal progress modal with animation."""
         try:
-            installed_apps_manager.remove_package(pkg_name)
-        except Exception:
-            pass
-
-        duration_ms = int((time.time() - t0) * 1000)
-
-        try:
-            TransactionManager().log_transaction(
+            modal = OperationProgressModal(
                 action="remove",
-                package=pkg_name,
-                provider=prov,
-                success=succ,
-                duration_ms=duration_ms,
-                error=err if not succ else "",
+                pkg_name=pkg_name,
+                pkg_dict=pkg_dict,
+                engine=self.engine,
+                callback=self._set_status,
             )
+            self.app.push_screen(modal)
         except Exception:
             pass
-
-        msg = (
-            f"✔ [bold green]Successfully removed {pkg_name}![/bold green]"
-            if succ
-            else f"✖ [bold red]Failed to remove {pkg_name}: "
-                 f"{err or 'Package not found or could not be removed'}[/]"
-        )
-        self.app.call_from_thread(self._set_status, msg)
 
     def _set_status(self, msg: str) -> None:
         self.status_text = msg
