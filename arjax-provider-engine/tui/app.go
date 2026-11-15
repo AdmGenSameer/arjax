@@ -95,13 +95,13 @@ func NewModel(pm *providers.ProviderManager) Model {
 	}
 
 	return Model{
-		pm:         pm,
-		distro:     distroLabel,
-		distroName: distroInfo.Name,
-		textInput:  ti,
-		spinner:    s,
-		packages:   []models.Package{},
-		pkgInfo:    make(map[string]models.PackageInfo),
+		pm:              pm,
+		distro:          distroLabel,
+		distroName:      distroInfo.Name,
+		textInput:       ti,
+		spinner:         s,
+		packages:        []models.Package{},
+		pkgInfo:         make(map[string]models.PackageInfo),
 		activeTab:       0,
 		statusMsg:       "Ready. Type a query and press Enter, or use [Tab] to browse.",
 		statusType:      "info",
