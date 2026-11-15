@@ -46,6 +46,15 @@ func NewProviderManager(cfg config.Config, providers ...Provider) *ProviderManag
 	}
 }
 
+// GetSupportedProviderNames returns list of names for all active supported providers
+func (pm *ProviderManager) GetSupportedProviderNames() []string {
+	names := make([]string, 0, len(pm.providers))
+	for _, p := range pm.providers {
+		names = append(names, p.Name())
+	}
+	return names
+}
+
 // SearchAll searches concurrently across all supported providers
 func (pm *ProviderManager) SearchAll(ctx context.Context, query string) ([]models.Package, error) {
 	if cached, ok := pm.cache.GetSearch(query); ok {
