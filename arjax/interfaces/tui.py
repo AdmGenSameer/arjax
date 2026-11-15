@@ -414,23 +414,58 @@ class ArjaxTUIApp(App):
             self.selected_pkg = pkgs[0]
             self._render_details(pkgs[0])
         else:
-            msg = (
-                f"✖ [bold yellow]No packages found matching '{query}'.[/]"
-            )
-            pkg_list.append(ListItem(Label(msg)))
-            self.status_text = (
-                f"✖ No packages found for '{query}'. Try another search query."
-            )
-            self.selected_pkg = None
+            # Check ML recommendations as smart alternatives (TF-IDF)
+            recs = []
             try:
-                self.query_one("#pkg_details", Static).update(
-                    "No package selected."
+                from arjax.intelligence.ml_suggestions import (
+                    MLPackageSuggester,
                 )
-                tree = self.query_one("#dep_tree", Tree)
-                tree.clear()
-                tree.root.set_label("Dependencies")
+                suggester = MLPackageSuggester(top_n=5)
+                recs = suggester.recommend(query, top_n=5)
             except Exception:
-                pass
+                recs = []
+
+            if recs:
+                alt_pkgs = []
+                for r in recs:
+                    alt_pkgs.append({
+                        "name": r.name,
+                        "description": r.description,
+                        "desc": (
+                            f"[ML Alternative {r.match_percentage}%] "
+                            f"{r.description}"
+                        ),
+                        "version": f"{r.match_percentage}% match",
+                        "provider": r.provider,
+                        "is_recipe": "recipe" in r.provider,
+                    })
+                for p in alt_pkgs:
+                    pkg_list.append(PackageItem(p))
+                self.status_text = (
+                    f"💡 No exact match for '{query}'. Showing {len(recs)} "
+                    "smart Linux alternative(s) (TF-IDF)."
+                )
+                self.selected_pkg = alt_pkgs[0]
+                self._render_details(alt_pkgs[0])
+            else:
+                msg = (
+                    f"✖ [bold yellow]No packages found matching '{query}'.[/]"
+                )
+                pkg_list.append(ListItem(Label(msg)))
+                self.status_text = (
+                    f"✖ No packages found for '{query}'. "
+                    "Try another search query."
+                )
+                self.selected_pkg = None
+                try:
+                    self.query_one("#pkg_details", Static).update(
+                        "No package selected."
+                    )
+                    tree = self.query_one("#dep_tree", Tree)
+                    tree.clear()
+                    tree.root.set_label("Dependencies")
+                except Exception:
+                    pass
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if isinstance(event.item, PackageItem):
@@ -496,6 +531,16 @@ class ArjaxTUIApp(App):
         else:
             info["dependencies"] = []
 
+        # Smart ML Recommendations
+        try:
+            from arjax.intelligence.ml_suggestions import (
+                MLPackageSuggester,
+            )
+            suggester = MLPackageSuggester(top_n=3)
+            info["recommendations"] = suggester.recommend(pkg_name, top_n=3)
+        except Exception:
+            info["recommendations"] = []
+
         self.app.call_from_thread(self._update_dep_tree, pkg_name, info)
 
     def _update_dep_tree(self, pkg_name: str, info: dict) -> None:
@@ -514,6 +559,19 @@ class ArjaxTUIApp(App):
             tree.root.add(
                 "[dim italic]No explicit dependencies listed[/dim italic]"
             )
+
+        recs = info.get("recommendations", [])
+        if recs:
+            rec_node = tree.root.add(
+                "💡 [bold cyan]Smart Alternatives (TF-IDF)[/]"
+            )
+            for r in recs:
+                rec_node.add(
+                    f"[green]{r.name}[/] [dim]({r.provider})[/] "
+                    f"[yellow]{r.match_percentage}% match[/]"
+                )
+            rec_node.expand()
+
         tree.root.expand()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

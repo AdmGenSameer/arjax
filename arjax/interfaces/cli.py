@@ -1071,11 +1071,68 @@ def install(
 
     raise typer.Exit(1)
 
+
+def show_smart_recommendations(query: str, limit: int = 5) -> bool:
+    """Display ML-based smart recommendations using TF-IDF similarity."""
+    try:
+        from arjax.intelligence.ml_suggestions import MLPackageSuggester
+        suggester = MLPackageSuggester(top_n=limit)
+        results = suggester.recommend(query, top_n=limit)
+        if not results:
+            return False
+
+        backend_name = (
+            "scikit-learn" if suggester.use_sklearn else "pure-python"
+        )
+        console.print(Panel(
+            f"[bold cyan]Smart Recommendations & Alternatives for "
+            f"'{query}'[/bold cyan]\n"
+            f"[dim]Powered by TF-IDF & Cosine Similarity "
+            f"({backend_name})[/dim]",
+            title="🤖 ML Package Suggestions",
+            border_style="cyan"
+        ))
+
+        table = Table(title="Suggested Packages", expand=False)
+        table.add_column("#", style="cyan", no_wrap=True)
+        table.add_column("Package Name", style="green", no_wrap=True)
+        table.add_column("Provider", style="blue")
+        table.add_column("Match", style="yellow", no_wrap=True)
+        table.add_column("Description", style="magenta")
+
+        for idx, rec in enumerate(results, 1):
+            score_color = "green" if rec.match_percentage >= 70 else "yellow"
+            score_str = (
+                f"[{score_color}]{rec.match_percentage}%[/{score_color}]"
+            )
+            table.add_row(
+                str(idx),
+                rec.name,
+                rec.provider,
+                score_str,
+                rec.description
+            )
+
+        console.print(table)
+        console.print(
+            "\n[cyan]Install any suggested package with: "
+            "arjax install <package>[/cyan]\n"
+        )
+        return True
+    except Exception as e:
+        logger.debug(f"Smart recommendation failed: {e}")
+        return False
+
+
 @app.command()
 def search(
-    query: Optional[List[str]] = Argument(None, help="Name of the software to search for"),
+    query: Optional[List[str]] = Argument(
+        None, help="Name of the software to search for"
+    ),
     debug: bool = Option(False, "--debug", help="Enable debug logging"),
-    limit: int = Option(5, "--limit", "-l", help="Maximum number of results to show"),
+    limit: int = Option(
+        5, "--limit", "-l", help="Maximum number of results to show"
+    ),
     aur: bool = Option(False, "--aur", help="Prefer AUR packages over Pacman"),
     aur_sortby: str = Option(
         "votes",
@@ -1086,6 +1143,12 @@ def search(
         ),
     ),
     no_cache: bool = Option(False, "--no-cache", help="Bypass cache and perform fresh search"),
+    smart: bool = Option(
+        False,
+        "--smart",
+        "-s",
+        help="Show ML-based smart recommendations & alternatives (TF-IDF)",
+    ),
     tui: bool = Option(False, "--tui", "-t", help="Open search in interactive TUI"),
 ) -> None:
     """
@@ -1334,9 +1397,13 @@ def search(
         # Show special guidance for Brave browser on openSUSE
         if detected_family == "suse" and "brave" in query_str.lower():
             show_opensuse_brave_guidance()
-        
+
+        # Display ML-based alternatives when no repository match found
+        smart_shown = show_smart_recommendations(query_str, limit=limit)
+
         # Always show the GitHub fallback and installation suggestions
-        github_fallback(query_str, search_errors)
+        if not smart_shown:
+            github_fallback(query_str, search_errors)
         return
 
     deduplicated_results = deduplicate_packages(results, prefer_aur=aur)
@@ -1393,14 +1460,31 @@ def search(
         table.add_row(str(idx), pkg, source, trust_display, desc or "No description")
 
     console.print(table)
-    console.print("\n[cyan]Search is now read-only. Install with: arjax install <package>[/cyan]")
+
+    if smart:
+        show_smart_recommendations(query_str, limit=limit)
+
+    console.print(
+        "\n[cyan]Search is now read-only. "
+        "Install with: arjax install <package>[/cyan]"
+    )
     return
 
 
 @app.command()
 def suggest(
-    purpose: Optional[List[str]] = Argument(None, help="Purpose or use case (e.g., 'video editing', 'office')"),
-    list_all: bool = Option(False, "--list", help="List all available purposes"),
+    purpose: Optional[List[str]] = Argument(
+        None, help="Purpose or use case (e.g., 'video editing', 'office')"
+    ),
+    list_all: bool = Option(
+        False, "--list", help="List all available purposes"
+    ),
+    smart: bool = Option(
+        False,
+        "--smart",
+        "-s",
+        help="Use ML TF-IDF recommendation engine",
+    ),
     debug: bool = Option(False, "--debug", help="Enable debug logging")
 ) -> None:
     """
@@ -1413,38 +1497,50 @@ def suggest(
         logger.info("Listing all available purposes")
         list_purposes()
         return
-    
+
     if not purpose:
         console.print(Panel(
             "[red]No purpose specified.[/red]\n\n"
             "[bold cyan]Usage:[/bold cyan]\n"
-            "- [cyan]arjax suggest video editing[/cyan] - Get video editing apps\n"
-            "- [cyan]arjax suggest office[/cyan] - Get office applications\n"
-            "- [cyan]arjax suggest --list[/cyan] - List all available purposes\n"
+            "- [cyan]arjax suggest video editing[/cyan] - Video editing apps\n"
+            "- [cyan]arjax suggest office[/cyan] - Office applications\n"
+            "- [cyan]arjax suggest --smart photoshop[/cyan] - ML advice\n"
+            "- [cyan]arjax suggest --list[/cyan] - List available purposes\n"
             "- [cyan]arjax suggest --help[/cyan] - Show help information",
             title="No Purpose Specified",
             border_style="red"
         ))
         raise typer.Exit(1)
-    
+
     purpose_str = ' '.join(purpose)
     logger.info(f"Purpose suggestion query: '{purpose_str}'")
-    
+
     if not purpose_str.strip():
         logger.warning("Empty purpose query provided by user")
         console.print(Panel(
             "[red]Empty purpose query provided.[/red]\n\n"
             "[bold cyan]Usage:[/bold cyan]\n"
-            "- [cyan]arjax suggest video editing[/cyan] - Get video editing apps\n"
-            "- [cyan]arjax suggest office[/cyan] - Get office applications\n"
-            "- [cyan]arjax suggest --list[/cyan] - List all available purposes",
+            "- [cyan]arjax suggest video editing[/cyan] - Video editing apps\n"
+            "- [cyan]arjax suggest office[/cyan] - Office applications\n"
+            "- [cyan]arjax suggest --list[/cyan] - List available purposes",
             title="Invalid Input",
             border_style="red"
         ))
         raise typer.Exit(1)
-    
-    # Display suggestions
-    suggest_apps(purpose_str)
+
+    if smart:
+        if not show_smart_recommendations(purpose_str):
+            console.print(Panel(
+                f"[yellow]No ML recommendations found for "
+                f"'{purpose_str}'.[/yellow]",
+                title="No Recommendations",
+                border_style="yellow"
+            ))
+        return
+
+    # Display suggestions (with ML fallback if rule-based returns False)
+    if not suggest_apps(purpose_str):
+        show_smart_recommendations(purpose_str)
 
 
 @app.command()

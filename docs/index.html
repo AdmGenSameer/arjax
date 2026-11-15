@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Arjax Documentation - Universal Linux Package Engine</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+  <meta name="description" content="Arjax documentation - Unified Linux package discovery, declarative recipes, and interactive terminal interface.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+
+  <!-- Docsify Themeable Dark Theme -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify-themeable@0/dist/css/theme-simple-dark.css">
+  
+  <style>
+    :root {
+      --base-font-size: 15px;
+      --theme-color: #7aa2f7;
+      --cover-background-color: #1a1b26;
+      --body-background: #1a1b26;
+      --sidebar-background: #16161e;
+      --sidebar-name-color: #7aa2f7;
+      --sidebar-nav-link-color: #a9b1d6;
+      --sidebar-nav-link-color--active: #7aa2f7;
+      --code-inline-background: #24283b;
+      --code-inline-color: #7dcfff;
+      --code-theme-background: #1f2335;
+      --code-theme-text: #c0caf5;
+      --notice-tip-border-color: #7aa2f7;
+      --table-row-odd-background: #1f2335;
+      --table-cell-border-color: #292e42;
+      --heading-color: #c0caf5;
+      --text-color-base: #a9b1d6;
+      --link-color: #7dcfff;
+    }
+
+    /* Custom UI tweaks */
+    .app-name-link {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    
+    .cover-main h1 {
+      font-size: 3rem;
+      font-weight: 800;
+      color: #7aa2f7;
+    }
+    
+    .cover-main h2 {
+      font-weight: 400;
+      color: #c0caf5;
+      margin-bottom: 2rem;
+    }
+    
+    .markdown-section pre {
+      border-radius: 8px;
+      border: 1px solid #292e42;
+    }
+
+    .markdown-section table {
+      border-collapse: collapse;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    /* Mermaid container */
+    .mermaid {
+      background: #1f2335;
+      padding: 1.5rem;
+      border-radius: 8px;
+      margin: 1.5rem 0;
+      text-align: center;
+      border: 1px solid #292e42;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">Loading Arjax Documentation...</div>
+
+  <!-- Mermaid.js -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        primaryColor: '#7aa2f7',
+        primaryTextColor: '#c0caf5',
+        primaryBorderColor: '#414868',
+        lineColor: '#7dcfff',
+        secondaryColor: '#bb9af7',
+        tertiaryColor: '#1f2335'
+      }
+    });
+  </script>
+
+  <!-- Docsify Configuration -->
+  <script>
+    window.$docsify = {
+      name: '⚡ Arjax',
+      repo: 'https://github.com/AdmGenSameer/archpkg-helper',
+      homepage: 'README.md',
+      loadSidebar: true,
+      loadNavbar: true,
+      coverpage: true,
+      subMaxLevel: 3,
+      auto2top: true,
+      mergeNavbar: true,
+      routerMode: 'hash',
+      
+      // Full-Text Search
+      search: {
+        maxAge: 86400000,
+        paths: 'auto',
+        placeholder: 'Search documentation (e.g. zapfast, tui, recipes)...',
+        noData: 'No matching documentation found.',
+        depth: 4
+      },
+
+      // Copy Code Button
+      copyCode: {
+        buttonText: 'Copy',
+        errorText: 'Failed',
+        successText: 'Copied!'
+      },
+
+      // Pagination
+      pagination: {
+        previousText: 'Previous',
+        nextText: 'Next',
+        crossChapter: true,
+        crossChapterText: true
+      },
+
+      // Mermaid renderer
+      markdown: {
+        renderer: {
+          code: function(code, lang) {
+            if (lang === "mermaid") {
+              return '<div class="mermaid">' + code + '</div>';
+            }
+            return this.origin.code.apply(this, arguments);
+          }
+        }
+      },
+
+      plugins: [
+        function(hook, vm) {
+          hook.doneEach(function() {
+            mermaid.run({
+              querySelector: '.mermaid'
+            });
+          });
+        }
+      ]
+    };
+  </script>
+
+  <!-- Docsify Core -->
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
+  
+  <!-- Docsify Plugins -->
+  <script src="https://cdn.jsdelivr.net/npm/docsify-themeable@0/dist/js/docsify-themeable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-copy-code@2/dist/docsify-copy-code.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/zoom-image.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-pagination@2/dist/docsify-pagination.min.js"></script>
+
+  <!-- Prism Syntax Highlighters -->
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-bash.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-go.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-yaml.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-json.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-markdown.min.js"></script>
+</body>
+</html>
+
