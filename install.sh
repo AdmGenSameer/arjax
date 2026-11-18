@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="arjax"
-REPO_ARCHIVE_URL="https://github.com/AdmGenSameer/arjax/archive/refs/heads/main.zip"
+REPO_ARCHIVE_URL="https://github.com/AdmGenSameer/archpkg-helper/archive/refs/heads/main.zip"
 INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/arjax"
 VENV_DIR="$INSTALL_ROOT/venv"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
@@ -93,17 +93,17 @@ install_python_system_package() {
     init_sudo
     case "$family" in
         arch)
-            $SUDO pacman -Sy --noconfirm python python-pip >/dev/null 2>&1
+            $SUDO pacman -Sy --noconfirm python python-pip
             ;;
         debian)
-            $SUDO apt-get update -y >/dev/null 2>&1 || true
-            $SUDO apt-get install -y python3 python3-venv python3-pip >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get update -y || true
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y python3 python3-venv python3-pip
             ;;
         fedora)
-            $SUDO dnf install -y python3 python3-pip python3-virtualenv >/dev/null 2>&1
+            $SUDO dnf install -y python3 python3-pip python3-virtualenv
             ;;
         suse)
-            $SUDO zypper install -y python3 python3-pip python3-virtualenv >/dev/null 2>&1
+            $SUDO zypper install -y python3 python3-pip python3-virtualenv
             ;;
         *)
             return 1
@@ -116,17 +116,17 @@ install_git_package() {
     init_sudo
     case "$family" in
         arch)
-            $SUDO pacman -Sy --noconfirm git >/dev/null 2>&1
+            $SUDO pacman -Sy --noconfirm git
             ;;
         debian)
-            $SUDO apt-get update -y >/dev/null 2>&1 || true
-            $SUDO apt-get install -y git >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get update -y || true
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y git
             ;;
         fedora)
-            $SUDO dnf install -y git >/dev/null 2>&1
+            $SUDO dnf install -y git
             ;;
         suse)
-            $SUDO zypper install -y git >/dev/null 2>&1
+            $SUDO zypper install -y git
             ;;
         *)
             return 1
@@ -139,22 +139,77 @@ install_go_package() {
     init_sudo
     case "$family" in
         arch)
-            $SUDO pacman -Sy --noconfirm go >/dev/null 2>&1
+            $SUDO pacman -Sy --noconfirm go
             ;;
         debian)
-            $SUDO apt-get update -y >/dev/null 2>&1 || true
-            $SUDO apt-get install -y golang-go >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get update -y || true
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y golang-go || DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y golang
             ;;
         fedora)
-            $SUDO dnf install -y golang >/dev/null 2>&1
+            $SUDO dnf install -y golang
             ;;
         suse)
-            $SUDO zypper install -y go >/dev/null 2>&1
+            $SUDO zypper install -y go
             ;;
         *)
             return 1
             ;;
     esac
+}
+
+prompt_yes_no() {
+    local prompt_text="$1"
+    local default_val="${2:-Y}"
+
+    if [ "$YES_TO_ALL" = true ]; then
+        return 0
+    fi
+
+    local choice=""
+    if [ -c /dev/tty ]; then
+        read -r -p "$prompt_text " choice < /dev/tty || choice=""
+    elif [ -t 0 ]; then
+        read -r -p "$prompt_text " choice || choice=""
+    else
+        case "$default_val" in
+            [yY]*) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+
+    choice="${choice:-$default_val}"
+    case "$choice" in
+        [yY]|[yY][eE][sS]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+run_sudo_auth() {
+    local dep_name="$1"
+    init_sudo
+    if [ -z "$SUDO" ]; then
+        return 0
+    fi
+
+    echo ""
+    log "Authentication required to install $dep_name."
+    if [ -c /dev/tty ]; then
+        if ! $SUDO -v < /dev/tty; then
+            log "Authentication failed or was cancelled."
+            return 1
+        fi
+    elif [ -t 0 ]; then
+        if ! $SUDO -v; then
+            log "Authentication failed or was cancelled."
+            return 1
+        fi
+    else
+        if ! $SUDO -n -v 2>/dev/null; then
+            log "Authentication required but non-interactive sudo is unavailable."
+            return 1
+        fi
+    fi
+    return 0
 }
 
 show_spinner() {
@@ -195,63 +250,42 @@ request_dep_install() {
         echo "$dep_name is required but is not installed."
         echo "Detected OS: $os_name"
         echo ""
-        if [ -c /dev/tty ]; then
-            read -r -p "Install $dep_name automatically? [Y/n]: " choice < /dev/tty
+        if prompt_yes_no "Install $dep_name automatically? [Y/n]:" "Y"; then
+            do_install=true
         else
-            read -r -p "Install $dep_name automatically? [Y/n]: " choice
+            do_install=false
         fi
-        case "$choice" in
-            [nN]|[nN][oO])
-                do_install=false
-                ;;
-            *)
-                do_install=true
-                ;;
-        esac
     fi
 
     if [ "$do_install" = true ]; then
-        init_sudo
-        if [ -n "$SUDO" ]; then
-            echo ""
-            log "Authentication required to install $dep_name."
-            if ! $SUDO -v; then
-                log "Authentication failed."
-                echo ""
-                echo "[x] $dep_name was not found."
-                echo ""
-                if [ -n "$extra_msg" ]; then
-                    echo -e "$extra_msg"
-                    echo ""
+        if run_sudo_auth "$dep_name"; then
+            local log_file
+            log_file="$(mktemp /tmp/arjax-install-XXXXXX.log 2>/dev/null || mktemp)"
+
+            # Run action in background, isolated from stdin
+            eval "$install_action" < /dev/null > "$log_file" 2>&1 &
+            local action_pid=$!
+
+            # Show spinner while running
+            show_spinner "$action_pid" "Installing $dep_name..."
+
+            wait "$action_pid"
+            local exit_code=$?
+
+            if [ "$exit_code" -eq 0 ]; then
+                log "$dep_name installed successfully"
+                rm -f "$log_file"
+                return 0
+            else
+                log "Failed to install $dep_name automatically"
+                if [ -s "$log_file" ]; then
+                    echo "Installation output:"
+                    tail -n 10 "$log_file" | sed 's/^/    /'
                 fi
-                echo "Detected OS: $os_name"
-                echo ""
-                echo "You can install it manually with:"
-                echo -e "    $install_cmds"
-                echo ""
-                echo "Or rerun this installer with --install-deps to install missing dependencies automatically."
-                exit 1
+                rm -f "$log_file"
             fi
         fi
-
-        # Run action in background
-        eval "$install_action" >/dev/null 2>&1 &
-        local action_pid=$!
-
-        # Show spinner while running
-        show_spinner "$action_pid" "Installing $dep_name..."
-
-        wait "$action_pid"
-        local exit_code=$?
-
-        if [ "$exit_code" -eq 0 ]; then
-            log "$dep_name installed successfully"
-            return 0
-        else
-            log "Failed to install $dep_name automatically"
-        fi
     fi
-
 
     # If we didn't install or installation failed:
     echo ""
@@ -284,46 +318,20 @@ install_python_support() {
     local distro_family="$1"
 
     log "Attempting to install Python packaging support for $distro_family..."
+    init_sudo
     case "$distro_family" in
         arch)
-            $SUDO pacman -Sy --noconfirm python python-pip >/dev/null 2>&1 || return 1
+            $SUDO pacman -Sy --noconfirm python python-pip
             ;;
         debian)
-            $SUDO apt-get update -y >/dev/null 2>&1 || true
-            $SUDO apt-get install -y python3-venv python3-pip >/dev/null 2>&1 || return 1
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get update -y || true
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y python3-venv python3-pip
             ;;
         fedora)
-            $SUDO dnf install -y python3-pip python3-virtualenv >/dev/null 2>&1 || return 1
+            $SUDO dnf install -y python3-pip python3-virtualenv
             ;;
         suse)
-            $SUDO zypper install -y python3-pip python3-virtualenv >/dev/null 2>&1 || return 1
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-
-    return 0
-}
-
-# Install pipx so the CLI's self-update and development workflows work on minimal systems.
-install_pipx_support() {
-    local distro_family="$1"
-
-    log "Attempting to install pipx for $distro_family..."
-    case "$distro_family" in
-        arch)
-            $SUDO pacman -Sy --noconfirm pipx >/dev/null 2>&1 || return 1
-            ;;
-        debian)
-            $SUDO apt-get update -y >/dev/null 2>&1 || true
-            $SUDO apt-get install -y pipx >/dev/null 2>&1 || return 1
-            ;;
-        fedora)
-            $SUDO dnf install -y pipx >/dev/null 2>&1 || return 1
-            ;;
-        suse)
-            $SUDO zypper install -y pipx >/dev/null 2>&1 || return 1
+            $SUDO zypper install -y python3-pip python3-virtualenv
             ;;
         *)
             return 1
@@ -373,37 +381,72 @@ ensure_go() {
         *) display_cmds="Install Go using your package manager" ;;
     esac
 
-    log "Checking for Go compiler to build high-performance Arjax Provider Engine..."
-    if [ "$INSTALL_DEPS" = true ] || [ "$YES_TO_ALL" = true ]; then
-        request_dep_install "Go compiler" "$display_cmds" "install_go_package $distro_family" "Arjax Provider Engine is built in Go for maximum speed and concurrency."
+    log "Go compiler was not detected on this system."
+    log "Arjax includes an optional Go Provider Engine binary for ultra-fast parallel searches and TUI."
+    log "Note: Go is OPTIONAL. If skipped, Arjax runs smoothly using built-in Python providers."
+    echo ""
+
+    local should_install=false
+    if [ "$INSTALL_DEPS" = true ]; then
+        should_install=true
+    elif [ "$YES_TO_ALL" = true ]; then
+        should_install=false
     else
-        echo ""
-        echo "Go compiler was not detected on this system."
-        echo "Arjax includes a Go Provider Engine binary for ultra-fast parallel searches and TUI."
-        echo "Detected OS: $(get_os_info)"
-        echo ""
-        if [ -c /dev/tty ]; then
-            read -r -p "Install Go automatically to compile provider engine? [Y/n]: " choice < /dev/tty
+        if prompt_yes_no "Install Go compiler automatically to compile provider engine? [y/N]:" "N"; then
+            should_install=true
         else
-            read -r -p "Install Go automatically to compile provider engine? [Y/n]: " choice
+            log "Skipping Go installation. Arjax will use Python fallback providers."
+            return 0
         fi
-        case "$choice" in
-            [nN]|[nN][oO])
-                log "Skipping Go installation. Arjax will use Python fallback providers."
-                return 0
-                ;;
-            *)
-                request_dep_install "Go compiler" "$display_cmds" "install_go_package $distro_family" "Arjax Provider Engine is built in Go."
-                ;;
-        esac
     fi
+
+    if [ "$should_install" = true ]; then
+        if run_sudo_auth "Go compiler"; then
+            local log_file
+            log_file="$(mktemp /tmp/arjax-go-install-XXXXXX.log 2>/dev/null || mktemp)"
+            eval "install_go_package $distro_family" < /dev/null > "$log_file" 2>&1 &
+            local action_pid=$!
+            show_spinner "$action_pid" "Installing Go compiler..."
+            wait "$action_pid"
+            local exit_code=$?
+            if [ "$exit_code" -eq 0 ] && command -v go >/dev/null 2>&1; then
+                log "Go compiler installed successfully ($(go version | awk '{print $3}'))"
+                rm -f "$log_file"
+                return 0
+            else
+                log "Notice: Go compiler installation did not complete."
+                if [ -s "$log_file" ]; then
+                    echo "Installer output:"
+                    tail -n 10 "$log_file" | sed 's/^/    /'
+                fi
+                rm -f "$log_file"
+            fi
+        else
+            log "Notice: Sudo authentication not completed. Skipping Go installation."
+        fi
+        log "Arjax will continue installation and use high-performance Python providers."
+    else
+        log "Skipping Go installation. Arjax will use Python fallback providers."
+    fi
+    return 0
 }
 
 ensure_python() {
+    local family
+    family="$(detect_distro_family)"
+    local display_cmds=""
+    case "$family" in
+        arch) display_cmds="sudo pacman -Sy python python-pip" ;;
+        debian) display_cmds="sudo apt update\n    sudo apt install -y python3 python3-venv python3-pip" ;;
+        fedora) display_cmds="sudo dnf install -y python3 python3-pip python3-virtualenv" ;;
+        suse) display_cmds="sudo zypper install -y python3 python3-pip python3-virtualenv" ;;
+        *) display_cmds="Install Python 3 using your package manager" ;;
+    esac
+
     if command -v python3 >/dev/null 2>&1; then
         if ! check_python_version; then
             local current_ver
-            current_ver=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
+            current_ver=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')" 2>/dev/null || echo "unknown")
             local os_name
             os_name="$(get_os_info)"
             echo ""
@@ -413,75 +456,26 @@ ensure_python() {
             echo ""
             echo "Detected OS: $os_name"
             echo ""
+            echo "You can update Python with:"
+            echo -e "    $display_cmds"
             exit 1
         fi
     else
-        local distro_family
-        distro_family="$(detect_distro_family)"
-        local display_cmds=""
-        case "$distro_family" in
-            arch) display_cmds="sudo pacman -Sy python python-pip" ;;
-            debian) display_cmds="sudo apt update\n    sudo apt install -y python3 python3-venv python3-pip" ;;
-            fedora) display_cmds="sudo dnf install -y python3 python3-pip python3-virtualenv" ;;
-            suse) display_cmds="sudo zypper install -y python3 python3-pip python3-virtualenv" ;;
-            *) display_cmds="Install Python 3 using your package manager" ;;
-        esac
-
         request_dep_install "Python 3" "$display_cmds" "install_python_system_package" "Arjax requires Python 3.10 or newer."
     fi
 
-    if ! python3 -m pip --version >/dev/null 2>&1; then
-        log "Bootstrapping pip with ensurepip..."
-        python3 -m ensurepip --upgrade >/dev/null 2>&1 || true
-    fi
-
-    local family
-    family="$(detect_distro_family)"
-    local display_cmds=""
-    case "$family" in
-        arch) display_cmds="sudo pacman -Sy python-pip" ;;
-        debian) display_cmds="sudo apt update\n    sudo apt install -y python3-pip python3-venv" ;;
-        fedora) display_cmds="sudo dnf install -y python3-pip python3-virtualenv" ;;
-        suse) display_cmds="sudo zypper install -y python3-pip python3-virtualenv" ;;
-        *) display_cmds="Install python3-pip and python3-venv using your package manager" ;;
-    esac
-
-    if ! python3 -m pip --version >/dev/null 2>&1; then
-        request_dep_install "Python pip support" "$display_cmds" "install_python_support $family" "Arjax requires pip to install dependencies."
-    fi
-
+    # Check if python3-venv is available to create isolated environments
     if ! python3 -m venv --help >/dev/null 2>&1; then
-        request_dep_install "Python venv support" "$display_cmds" "install_python_support $family" "Arjax requires venv to create a private environment."
+        local venv_cmds=""
+        case "$family" in
+            arch) venv_cmds="sudo pacman -Sy python" ;;
+            debian) venv_cmds="sudo apt update\n    sudo apt install -y python3-venv python3-pip" ;;
+            fedora) venv_cmds="sudo dnf install -y python3-virtualenv" ;;
+            suse) venv_cmds="sudo zypper install -y python3-virtualenv" ;;
+            *) venv_cmds="Install python3-venv using your package manager" ;;
+        esac
+        request_dep_install "Python venv support" "$venv_cmds" "install_python_support $family" "Arjax requires venv to create an isolated environment."
     fi
-}
-
-ensure_pipx() {
-    if command -v pipx >/dev/null 2>&1; then
-        log "pipx is already installed"
-        return 0
-    fi
-
-    local distro_family
-    distro_family="$(detect_distro_family)"
-    
-    local display_cmds=""
-    case "$distro_family" in
-        arch) display_cmds="sudo pacman -S pipx" ;;
-        debian) display_cmds="sudo apt update\n    sudo apt install -y pipx" ;;
-        fedora) display_cmds="sudo dnf install -y pipx" ;;
-        suse) display_cmds="sudo zypper install -y pipx" ;;
-        *) display_cmds="Install pipx using your package manager" ;;
-    esac
-
-    request_dep_install "pipx" "$display_cmds" "install_pipx_support $distro_family" "Arjax requires pipx for its CLI components."
-
-    if command -v pipx >/dev/null 2>&1; then
-        pipx ensurepath >/dev/null 2>&1 || true
-        return 0
-    fi
-
-    log "pipx not present; continuing with isolated virtual environment setup in $VENV_DIR"
-    return 0
 }
 
 ensure_source() {
@@ -499,13 +493,29 @@ create_venv() {
     mkdir -p "$INSTALL_ROOT"
     if [ ! -x "$VENV_DIR/bin/python" ]; then
         log "Creating virtual environment in $VENV_DIR"
-        python3 -m venv "$VENV_DIR"
+        if ! python3 -m venv "$VENV_DIR" 2>/dev/null; then
+            log "Standard venv creation failed; attempting minimal venv creation..."
+            python3 -m venv --without-pip "$VENV_DIR" || die "Could not create virtual environment in $VENV_DIR."
+        fi
     fi
 
-    # Some minimal environments create the venv without an immediately usable pip.
+    if [ ! -x "$VENV_DIR/bin/python" ]; then
+        die "Could not find python binary in virtual environment: $VENV_DIR"
+    fi
+
+    # Ensure pip is available inside the virtual environment
     if [ ! -x "$VENV_DIR/bin/pip" ]; then
         log "Bootstrapping pip inside the virtual environment..."
         "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+    fi
+
+    if [ ! -x "$VENV_DIR/bin/pip" ]; then
+        log "Bootstrapping pip using standalone get-pip..."
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - >/dev/null 2>&1 || true
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO- https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - >/dev/null 2>&1 || true
+        fi
     fi
 
     if [ ! -x "$VENV_DIR/bin/pip" ]; then
@@ -518,22 +528,25 @@ install_package() {
     local pip_bin="$VENV_DIR/bin/pip"
 
     if [ ! -x "$pip_bin" ]; then
-        log "pip is missing from the virtual environment, trying to bootstrap it..."
-        "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
-    fi
-
-    if [ ! -x "$pip_bin" ]; then
-        die "pip is still unavailable inside the virtual environment."
+        die "pip is unavailable inside the virtual environment."
     fi
 
     log "Upgrading packaging tools..."
-    "$pip_bin" install --upgrade pip setuptools wheel >/dev/null
+    "$pip_bin" install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
 
     log "Installing Arjax from $SOURCE_SPEC..."
-    "$pip_bin" install --upgrade "$SOURCE_SPEC"
+    if ! "$pip_bin" install --upgrade "$SOURCE_SPEC"; then
+        local fallback_url="https://github.com/AdmGenSameer/arjax/archive/refs/heads/main.zip"
+        if [ "$SOURCE_SPEC" != "$fallback_url" ]; then
+            log "Retrying installation with fallback archive URL..."
+            "$pip_bin" install --upgrade "$fallback_url"
+        else
+            die "Failed to install Arjax from $SOURCE_SPEC."
+        fi
+    fi
 
-    log "Installing GUI dependency..."
-    "$pip_bin" install --upgrade PyQt5
+    log "Installing GUI dependency (PyQt5)..."
+    "$pip_bin" install --upgrade PyQt5 >/dev/null 2>&1 || log "Notice: PyQt5 could not be installed automatically. Arjax CLI and TUI are fully functional; run 'arjax gui-install' to install GUI support later."
 }
 
 build_go_engine() {
@@ -541,6 +554,25 @@ build_go_engine() {
     if [ ! -d "$engine_dir" ]; then
         if [ -d "$INSTALL_ROOT/arjax-provider-engine" ]; then
             engine_dir="$INSTALL_ROOT/arjax-provider-engine"
+        fi
+    fi
+
+    local tmp_engine=""
+    if [ ! -d "$engine_dir" ] && command -v go >/dev/null 2>&1; then
+        tmp_engine="$(mktemp -d /tmp/arjax-engine-XXXXXX 2>/dev/null || mktemp -d)"
+        local zip_file="$tmp_engine/repo.zip"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$REPO_ARCHIVE_URL" -o "$zip_file" 2>/dev/null || true
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$zip_file" "$REPO_ARCHIVE_URL" 2>/dev/null || true
+        fi
+        if [ -f "$zip_file" ] && command -v python3 >/dev/null 2>&1; then
+            python3 -c "import zipfile; zipfile.ZipFile('$zip_file').extractall('$tmp_engine')" 2>/dev/null || true
+            local extracted_dir
+            extracted_dir="$(find "$tmp_engine" -maxdepth 2 -type d -name "arjax-provider-engine" 2>/dev/null | head -n 1)"
+            if [ -n "$extracted_dir" ] && [ -d "$extracted_dir" ]; then
+                engine_dir="$extracted_dir"
+            fi
         fi
     fi
 
@@ -553,10 +585,14 @@ build_go_engine() {
         if [ -x "$BIN_DIR/arjax-provider" ]; then
             log "Arjax Go Provider Engine successfully compiled and installed to $BIN_DIR/arjax-provider"
         else
-            log "Go compilation failed. Arjax will seamlessly run using built-in Python providers."
+            log "Notice: Go compilation was not completed. Arjax will seamlessly run using built-in Python providers."
         fi
     else
         log "Go compiler or engine source not present. Arjax will use Python fallback provider system."
+    fi
+
+    if [ -n "$tmp_engine" ] && [ -d "$tmp_engine" ]; then
+        rm -rf "$tmp_engine"
     fi
 }
 
@@ -728,9 +764,11 @@ configure_arch_profile() {
         log "Non-interactive mode: selecting normal profile"
     else
         if [ -c /dev/tty ]; then
-            read -r -p "Enter choice [1/2] (default: 1): " ARJAX_PROFILE_CHOICE < /dev/tty
+            read -r -p "Enter choice [1/2] (default: 1): " ARJAX_PROFILE_CHOICE < /dev/tty || ARJAX_PROFILE_CHOICE="1"
+        elif [ -t 0 ]; then
+            read -r -p "Enter choice [1/2] (default: 1): " ARJAX_PROFILE_CHOICE || ARJAX_PROFILE_CHOICE="1"
         else
-            read -r -p "Enter choice [1/2] (default: 1): " ARJAX_PROFILE_CHOICE
+            ARJAX_PROFILE_CHOICE="1"
         fi
     fi
 

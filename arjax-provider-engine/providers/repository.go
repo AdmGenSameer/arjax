@@ -62,7 +62,7 @@ func (rp *RepositoryProvider) parseSearchResults(output string, query string) []
 	lines := strings.Split(output, "\n")
 
 	switch rp.pm {
-	case "pacman":
+	case "paru", "pacman":
 		for i := 0; i < len(lines); i++ {
 			line := strings.TrimSpace(lines[i])
 			if line == "" {
@@ -174,6 +174,9 @@ func (rp *RepositoryProvider) Remove(ctx context.Context, pkg models.Package) (m
 	var args []string
 
 	switch rp.pm {
+	case "paru":
+		removeCmd = fmt.Sprintf("paru -R --noconfirm %s", pkg.Name)
+		args = []string{"-R", "--noconfirm", pkg.Name}
 	case "pacman":
 		removeCmd = fmt.Sprintf("sudo pacman -R --noconfirm %s", pkg.Name)
 		args = []string{"-R", "--noconfirm", pkg.Name}
@@ -237,7 +240,7 @@ func (rp *RepositoryProvider) Update(ctx context.Context) (models.Result, error)
 func (rp *RepositoryProvider) Info(ctx context.Context, pkgName string) (models.PackageInfo, error) {
 	var args []string
 	switch rp.pm {
-	case "pacman":
+	case "paru", "pacman":
 		args = []string{"-Si", pkgName}
 	case "apt":
 		args = []string{"show", pkgName}
@@ -245,6 +248,12 @@ func (rp *RepositoryProvider) Info(ctx context.Context, pkgName string) (models.
 		args = []string{"info", pkgName}
 	case "zypper":
 		args = []string{"info", pkgName}
+	default:
+		return models.PackageInfo{}, fmt.Errorf("unsupported package manager: %s", rp.pm)
+	}
+
+	if len(args) == 0 {
+		return models.PackageInfo{}, fmt.Errorf("no arguments generated for package manager: %s", rp.pm)
 	}
 
 	res := utils.RunCommand(ctx, rp.pm, args...)
