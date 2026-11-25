@@ -90,3 +90,4 @@ func AcquireProcessCoordLock(provider string) (release func(), err error) {
 		_ = f.Close()
 	}, nil
 }
+

@@ -394,10 +394,11 @@ export const InstalledPage: React.FC = () => {
             <button
               onClick={handleUpdateAll}
               disabled={updatingAll || updatesCount === 0}
-              className={`px-4 py-2 rounded-lg font-label-md text-label-md flex items-center gap-2.5 transition duration-150 shadow-md hover:shadow-lg active:scale-95 cursor-pointer ${updatesCount > 0
+              className={`px-4 py-2 rounded-lg font-label-md text-label-md flex items-center gap-2.5 transition duration-150 shadow-md hover:shadow-lg active:scale-95 cursor-pointer ${
+                updatesCount > 0
                   ? 'bg-primary-container hover:bg-inverse-primary text-on-primary-container'
                   : 'bg-surface-container text-on-surface-variant opacity-70 cursor-default'
-                }`}
+              }`}
               type="button"
             >
               <span className="material-symbols-outlined text-[18px]">
@@ -592,10 +593,11 @@ export const InstalledPage: React.FC = () => {
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
             <button
               onClick={() => setFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md font-medium transition shrink-0 cursor-pointer ${filter === 'all'
+              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md font-medium transition shrink-0 cursor-pointer ${
+                filter === 'all'
                   ? 'bg-primary-container/20 text-primary-fixed-dim'
                   : 'bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
-                }`}
+              }`}
               type="button"
             >
               All (28)
@@ -603,10 +605,11 @@ export const InstalledPage: React.FC = () => {
 
             <button
               onClick={() => setFilter('updates')}
-              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md transition shrink-0 flex items-center gap-1.5 cursor-pointer ${filter === 'updates'
+              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md transition shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                filter === 'updates'
                   ? 'bg-primary-container/20 text-primary-fixed-dim font-medium'
                   : 'bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
-                }`}
+              }`}
               type="button"
             >
               <span>Updates Available</span>
@@ -617,10 +620,11 @@ export const InstalledPage: React.FC = () => {
 
             <button
               onClick={() => setFilter('apps')}
-              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md transition shrink-0 cursor-pointer ${filter === 'apps'
+              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md transition shrink-0 cursor-pointer ${
+                filter === 'apps'
                   ? 'bg-primary-container/20 text-primary-fixed-dim font-medium'
                   : 'bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
-                }`}
+              }`}
               type="button"
             >
               Apps (18)
@@ -628,10 +632,11 @@ export const InstalledPage: React.FC = () => {
 
             <button
               onClick={() => setFilter('games')}
-              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md transition shrink-0 cursor-pointer ${filter === 'games'
+              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md transition shrink-0 cursor-pointer ${
+                filter === 'games'
                   ? 'bg-primary-container/20 text-primary-fixed-dim font-medium'
                   : 'bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
-                }`}
+              }`}
               type="button"
             >
               Games (4)
@@ -639,10 +644,11 @@ export const InstalledPage: React.FC = () => {
 
             <button
               onClick={() => setFilter('runtimes')}
-              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md transition shrink-0 cursor-pointer ${filter === 'runtimes'
+              className={`px-3 py-1.5 rounded-lg text-label-md font-label-md transition shrink-0 cursor-pointer ${
+                filter === 'runtimes'
                   ? 'bg-primary-container/20 text-primary-fixed-dim font-medium'
                   : 'bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
-                }`}
+              }`}
               type="button"
             >
               System Runtimes (6)
@@ -772,10 +778,11 @@ export const InstalledPage: React.FC = () => {
 
                 {/* Format & Environment */}
                 <div className="md:col-span-2 flex items-center gap-2">
-                  <span className={`px-2 py-0.5 rounded-md font-label-sm text-label-sm ${app.isNative
+                  <span className={`px-2 py-0.5 rounded-md font-label-sm text-label-sm ${
+                    app.isNative
                       ? 'bg-surface-container text-tertiary'
                       : 'bg-surface-container text-surface-tint'
-                    }`}>
+                  }`}>
                     {app.format}
                   </span>
                 </div>
@@ -927,8 +934,9 @@ export const InstalledPage: React.FC = () => {
 
       {/* FLUENT NOTIFICATION / INSTALL FLYOUT */}
       <div
-        className={`fixed bottom-5 right-5 bg-mica-elevated border border-white/[0.12] text-fluent-text px-4 py-3 rounded-lg shadow-fluent-flyout z-50 flex items-center gap-3 transition-all duration-300 ${toastVisible ? 'translate-y-0 opacity-100' : 'translate-y-24 opacity-0 pointer-events-none'
-          }`}
+        className={`fixed bottom-5 right-5 bg-mica-elevated border border-white/[0.12] text-fluent-text px-4 py-3 rounded-lg shadow-fluent-flyout z-50 flex items-center gap-3 transition-all duration-300 ${
+          toastVisible ? 'translate-y-0 opacity-100' : 'translate-y-24 opacity-0 pointer-events-none'
+        }`}
       >
         <div className="w-7 h-7 rounded-md bg-fluent-blue/20 text-fluent-blue flex items-center justify-center">
           <span className="material-symbols-outlined text-[18px]">downloading</span>
