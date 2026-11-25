@@ -90,6 +90,11 @@ func (pm *ProviderManager) GetCapabilities() []ProviderCapability {
 	return GetCapabilitiesOrdered(pm.GetCapabilityMatrix())
 }
 
+// GetProviderStatuses probes runtime availability and service health separately from code support
+func (pm *ProviderManager) GetProviderStatuses(ctx context.Context) []ProviderStatus {
+	return ProbeProviderStatuses(ctx, pm.GetCapabilityMatrix())
+}
+
 // SearchProvider queries a single named provider without invoking unrelated providers
 func (pm *ProviderManager) SearchProvider(ctx context.Context, providerName, query string) ([]models.Package, error) {
 	for _, p := range pm.providers {

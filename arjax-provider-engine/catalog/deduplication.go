@@ -191,8 +191,14 @@ func (d *Deduplicator) ConvertPackageToOffer(p models.Package, isInstalled bool,
 	}
 
 	scope := DetermineScope(prov)
+	if prov == "flatpak" && (strings.EqualFold(p.Scope, "user") || strings.EqualFold(p.Scope, "system")) {
+		scope = InstallScope(strings.ToLower(strings.TrimSpace(p.Scope)))
+	}
 	perms := DeterminePermissions(prov, p.Name)
 	offerID := BuildOfferIdentity(prov, repo, p.Name, p.Arch, p.Branch, p.Channel)
+	if prov == "flatpak" && (strings.EqualFold(p.Scope, "user") || strings.EqualFold(p.Scope, "system")) {
+		offerID += ":scope=" + strings.ToLower(strings.TrimSpace(p.Scope))
+	}
 	trust := EvaluateSourceTrust(prov, repo, p.Name)
 
 	dSize := p.Size
@@ -221,30 +227,30 @@ func (d *Deduplicator) ConvertPackageToOffer(p models.Package, isInstalled bool,
 	res := d.ResolveIdentity(p.Name, prov)
 
 	return PackageOffer{
-		ID:              offerID,
-		AppID:           res.CanonicalID,
-		PackageName:     p.Name,
-		Provider:        prov,
-		Repository:      repo,
-		Source:          repo,
-		Architecture:    arch,
-		Version:         p.Version,
-		Branch:          branch,
-		Channel:         channel,
-		DownloadSize:    dSize,
-		InstalledSize:   iSize,
-		InstallScope:    scope,
-		Scope:           scope,
-		Permissions:     perms,
-		DependencyCount: depCount,
-		Dependencies:    p.Dependencies,
-		IsInstalled:     isInstalled,
+		ID:               offerID,
+		AppID:            res.CanonicalID,
+		PackageName:      p.Name,
+		Provider:         prov,
+		Repository:       repo,
+		Source:           repo,
+		Architecture:     arch,
+		Version:          p.Version,
+		Branch:           branch,
+		Channel:          channel,
+		DownloadSize:     dSize,
+		InstalledSize:    iSize,
+		InstallScope:     scope,
+		Scope:            scope,
+		Permissions:      perms,
+		DependencyCount:  depCount,
+		Dependencies:     p.Dependencies,
+		IsInstalled:      isInstalled,
 		InstalledVersion: installedVer,
-		IsEligible:      true,
-		TrustLevel:      trust.TrustLevel,
-		SignatureStatus: trust.SignatureStatus,
-		Trust:           trust,
-		CommandPreview:  FormatCommandPreview(prov, repo, p.Name, branch, channel),
+		IsEligible:       true,
+		TrustLevel:       trust.TrustLevel,
+		SignatureStatus:  trust.SignatureStatus,
+		Trust:            trust,
+		CommandPreview:   FormatCommandPreview(prov, repo, p.Name, branch, channel),
 	}
 }
 

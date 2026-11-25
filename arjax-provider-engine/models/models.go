@@ -14,6 +14,7 @@ type Package struct {
 	Arch         string   `json:"arch,omitempty"`
 	Branch       string   `json:"branch,omitempty"`  // Flatpak branch (e.g. stable, beta)
 	Channel      string   `json:"channel,omitempty"` // Snap channel (e.g. latest/stable)
+	Scope        string   `json:"scope,omitempty"`   // Flatpak installation scope ("user" | "system")
 	Dependencies []string `json:"dependencies,omitempty"`
 }
 

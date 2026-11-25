@@ -101,11 +101,36 @@ func (sp *SnapProvider) Remove(ctx context.Context, pkg models.Package) (models.
 
 func (sp *SnapProvider) Update(ctx context.Context) (models.Result, error) {
 	start := time.Now()
-	res := utils.RunCommand(ctx, "snap", "refresh")
+	res := utils.RunCommand(ctx, "sudo", "snap", "refresh")
 	endTime := time.Now()
 
 	return models.Result{
 		Package:    "snap-refresh",
+		Provider:   "snap",
+		Success:    res.ExitCode == 0,
+		StartTime:  start,
+		EndTime:    endTime,
+		DurationMs: endTime.Sub(start).Milliseconds(),
+		Output:     res.Stdout,
+		Error:      res.Stderr,
+	}, nil
+}
+
+// UpdatePackage refreshes a single Snap package cleanly.
+func (sp *SnapProvider) UpdatePackage(ctx context.Context, pkg models.Package) (models.Result, error) {
+	start := time.Now()
+	if !sp.IsSupported() {
+		return models.Result{}, fmt.Errorf("snap binary not found")
+	}
+	args := []string{"snap", "refresh"}
+	if pkg.Name != "" && pkg.Name != "snap-refresh" {
+		args = append(args, pkg.Name)
+	}
+	res := utils.RunCommand(ctx, "sudo", args...)
+	endTime := time.Now()
+
+	return models.Result{
+		Package:    pkg.Name,
 		Provider:   "snap",
 		Success:    res.ExitCode == 0,
 		StartTime:  start,

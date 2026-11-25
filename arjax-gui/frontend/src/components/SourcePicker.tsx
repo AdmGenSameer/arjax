@@ -221,10 +221,15 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({
                 <strong className="text-on-surface block">
                   Source Trust ({selectedOffer.trust?.signatureStatus || selectedOffer.signatureStatus || 'standard'}):
                 </strong>
-                <span className="text-on-surface-variant">
+                <span className="text-on-surface-variant block">
                   {selectedOffer.trust?.summary || formatTrustLabel(trustLevel)}
                   {selectedOffer.trust?.buildRecipe ? ` • Recipe: ${selectedOffer.trust.buildRecipe}` : ''}
                 </span>
+                {selectedOffer.trust?.provenance && (
+                  <span className="text-[11px] font-mono text-on-surface-variant block mt-1">
+                    Origin: {selectedOffer.trust.provenance.origin} · Key: {selectedOffer.trust.provenance.signingKey}
+                  </span>
+                )}
               </div>
             </div>
           </div>

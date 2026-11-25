@@ -262,11 +262,12 @@ func (r *RecommendationEngine) RankAndAnnotate(app *UnifiedApplication, userPref
 		r.CheckEligibility(&app.Offers[i])
 	}
 
-	// Compute highest compatible version across eligible offers for PolicyLatestVersion
+	// Compute highest comparable numeric version across eligible offers for PolicyLatestVersion,
+	// avoiding blind cross-ecosystem comparisons of channels ("stable") or conflicting distro epochs.
 	highestVersion := ""
 	highestProv := ""
 	for _, o := range app.Offers {
-		if !o.IsEligible || o.Version == "" || strings.EqualFold(o.Version, "latest") {
+		if !o.IsEligible || IsReleaseTrack(o.Version) {
 			continue
 		}
 		if highestVersion == "" {
@@ -274,13 +275,11 @@ func (r *RecommendationEngine) RankAndAnnotate(app *UnifiedApplication, userPref
 			highestProv = o.Provider
 			continue
 		}
-		// Compare against leading version using offer's provider comparator
-		if CompareVersions(o.Provider, o.Version, highestVersion) > 0 {
+		if cmp, err := CompareCrossEcosystem(o.Provider, o.Version, highestProv, highestVersion); err == nil && cmp > 0 {
 			highestVersion = o.Version
 			highestProv = o.Provider
 		}
 	}
-	_ = highestProv
 
 	for i := range app.Offers {
 		app.Offers[i].Score = r.calculateScoreWithContext(&app.Offers[i], highestVersion)

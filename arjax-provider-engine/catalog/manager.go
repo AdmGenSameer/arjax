@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/appstream"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog/updates"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/icons"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/providers"
@@ -24,6 +25,8 @@ type CatalogManager struct {
 	recommender      *RecommendationEngine
 	progressive      *ProgressiveSearchEngine
 	txMgr            *TransactionManager
+	updateMgr        *updates.Manager
+	updateSched      *updates.Scheduler
 	installedFetcher func(ctx context.Context) map[string]string
 	mu               sync.RWMutex
 	cfg              CatalogConfig
@@ -42,6 +45,8 @@ func NewCatalogManager(
 	recommender := NewRecommendationEngine(cfg)
 	progressive := NewProgressiveSearchEngine(pm, crawler, deduper, recommender, installedFetcher)
 	txMgr := NewTransactionManager(pm)
+	updateMgr := updates.NewManager(txMgr.Inner())
+	updateSched := updates.NewScheduler(updateMgr, 10*time.Minute)
 
 	// Automatically register offers discovered via progressive search so InstallOffer(offerID) is always valid
 	progressive.SetOfferObserver(txMgr.RegisterOffers)
@@ -54,10 +59,35 @@ func NewCatalogManager(
 		recommender:      recommender,
 		progressive:      progressive,
 		txMgr:            txMgr,
+		updateMgr:        updateMgr,
+		updateSched:      updateSched,
 		installedFetcher: installedFetcher,
 		cfg:              cfg,
 		cache:            make(map[string]*UnifiedApplication),
 	}
+}
+
+// Updates returns the Update Center orchestrator.
+func (cm *CatalogManager) Updates() *updates.Manager {
+	return cm.updateMgr
+}
+
+// UpdateScheduler returns the background update check scheduler.
+func (cm *CatalogManager) UpdateScheduler() *updates.Scheduler {
+	return cm.updateSched
+}
+
+// RecoverTransactions reconciles any incomplete journal transactions left by a prior crash.
+func (cm *CatalogManager) RecoverTransactions(ctx context.Context, probe InstalledStateProbe) []TransactionDTO {
+	return cm.txMgr.RecoverOnStartup(ctx, probe)
+}
+
+// ProviderStatuses returns runtime host availability & service health separately from code support.
+func (cm *CatalogManager) ProviderStatuses(ctx context.Context) []providers.ProviderStatus {
+	if cm.pm != nil {
+		return cm.pm.GetProviderStatuses(ctx)
+	}
+	return providers.ProbeProviderStatuses(ctx, providers.DefaultCapabilityMatrix())
 }
 
 // Transactions returns the unified transaction engine.

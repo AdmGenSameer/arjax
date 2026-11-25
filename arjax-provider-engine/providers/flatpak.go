@@ -10,6 +10,12 @@ import (
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
 )
 
+// ScopedUpdater allows providers such as Flatpak (--user/--system ref) and Snap (single snap refresh)
+// to upgrade a specific scoped offer safely, while system repos (Pacman) perform full upgrades.
+type ScopedUpdater interface {
+	UpdatePackage(ctx context.Context, pkg models.Package) (models.Result, error)
+}
+
 type FlatpakProvider struct{}
 
 func NewFlatpakProvider() *FlatpakProvider {
@@ -22,6 +28,24 @@ func (fp *FlatpakProvider) Name() string {
 
 func (fp *FlatpakProvider) IsSupported() bool {
 	return utils.CommandExists("flatpak")
+}
+
+func flatpakScopeFlag(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "user":
+		return "--user"
+	case "system":
+		return "--system"
+	default:
+		return ""
+	}
+}
+
+func flatpakQualifiedRef(appID, branch string) string {
+	if b := strings.TrimSpace(branch); b != "" {
+		return appID + "//" + b
+	}
+	return appID
 }
 
 func (fp *FlatpakProvider) Search(ctx context.Context, query string) ([]models.Package, error) {
@@ -49,6 +73,10 @@ func (fp *FlatpakProvider) Search(ctx context.Context, query string) ([]models.P
 			if len(parts) >= 4 {
 				version = strings.TrimSpace(parts[3])
 			}
+			branch := ""
+			if len(parts) >= 5 {
+				branch = strings.TrimSpace(parts[4])
+			}
 
 			pkgs = append(pkgs, models.Package{
 				Name:        appID,
@@ -56,6 +84,7 @@ func (fp *FlatpakProvider) Search(ctx context.Context, query string) ([]models.P
 				Description: name + " - " + desc,
 				Provider:    "flatpak",
 				Source:      "flathub",
+				Branch:      branch,
 			})
 		}
 	}
@@ -68,8 +97,19 @@ func (fp *FlatpakProvider) Install(ctx context.Context, pkg models.Package) (mod
 		return models.Result{}, fmt.Errorf("flatpak binary not found")
 	}
 
-	installCmd := fmt.Sprintf("flatpak install -y flathub %s", pkg.Name)
-	res := utils.RunCommand(ctx, "flatpak", "install", "-y", "flathub", pkg.Name)
+	remote := pkg.Repo
+	if remote == "" {
+		remote = "flathub"
+	}
+	ref := flatpakQualifiedRef(pkg.Name, pkg.Branch)
+	args := []string{"install", "-y"}
+	if sf := flatpakScopeFlag(pkg.Scope); sf != "" {
+		args = append(args, sf)
+	}
+	args = append(args, remote, ref)
+
+	installCmd := "flatpak " + strings.Join(args, " ")
+	res := utils.RunCommand(ctx, "flatpak", args...)
 	endTime := time.Now()
 
 	return models.Result{
@@ -87,8 +127,15 @@ func (fp *FlatpakProvider) Install(ctx context.Context, pkg models.Package) (mod
 
 func (fp *FlatpakProvider) Remove(ctx context.Context, pkg models.Package) (models.Result, error) {
 	start := time.Now()
-	removeCmd := fmt.Sprintf("flatpak uninstall -y %s", pkg.Name)
-	res := utils.RunCommand(ctx, "flatpak", "uninstall", "-y", pkg.Name)
+	ref := flatpakQualifiedRef(pkg.Name, pkg.Branch)
+	args := []string{"uninstall", "-y"}
+	if sf := flatpakScopeFlag(pkg.Scope); sf != "" {
+		args = append(args, sf)
+	}
+	args = append(args, ref)
+
+	removeCmd := "flatpak " + strings.Join(args, " ")
+	res := utils.RunCommand(ctx, "flatpak", args...)
 	endTime := time.Now()
 
 	return models.Result{
@@ -104,6 +151,7 @@ func (fp *FlatpakProvider) Remove(ctx context.Context, pkg models.Package) (mode
 	}, nil
 }
 
+// Update upgrades all Flatpak installations cleanly.
 func (fp *FlatpakProvider) Update(ctx context.Context) (models.Result, error) {
 	start := time.Now()
 	res := utils.RunCommand(ctx, "flatpak", "update", "-y")
@@ -111,6 +159,36 @@ func (fp *FlatpakProvider) Update(ctx context.Context) (models.Result, error) {
 
 	return models.Result{
 		Package:    "flatpak-update",
+		Provider:   "flatpak",
+		Success:    res.ExitCode == 0,
+		StartTime:  start,
+		EndTime:    endTime,
+		DurationMs: endTime.Sub(start).Milliseconds(),
+		Output:     res.Stdout,
+		Error:      res.Stderr,
+	}, nil
+}
+
+// UpdatePackage upgrades a specific Flatpak ref while preserving user vs system scope.
+func (fp *FlatpakProvider) UpdatePackage(ctx context.Context, pkg models.Package) (models.Result, error) {
+	start := time.Now()
+	if !fp.IsSupported() {
+		return models.Result{}, fmt.Errorf("flatpak binary not found")
+	}
+
+	args := []string{"update", "-y"}
+	if sf := flatpakScopeFlag(pkg.Scope); sf != "" {
+		args = append(args, sf)
+	}
+	if pkg.Name != "" && pkg.Name != "flatpak-update" {
+		args = append(args, flatpakQualifiedRef(pkg.Name, pkg.Branch))
+	}
+
+	res := utils.RunCommand(ctx, "flatpak", args...)
+	endTime := time.Now()
+
+	return models.Result{
+		Package:    pkg.Name,
 		Provider:   "flatpak",
 		Success:    res.ExitCode == 0,
 		StartTime:  start,
@@ -140,6 +218,8 @@ func (fp *FlatpakProvider) Info(ctx context.Context, pkgName string) (models.Pac
 			v := strings.TrimSpace(parts[1])
 			if strings.EqualFold(k, "Version") {
 				info.Version = v
+			} else if strings.EqualFold(k, "Installation") {
+				info.Repo = strings.TrimSpace(v)
 			}
 		}
 	}

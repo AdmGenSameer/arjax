@@ -169,5 +169,23 @@ func TestApp_OfferAuthorityAndCapabilities(t *testing.T) {
 	if app.GetRecommendationPolicy() != string(catalog.PolicySandboxPreferred) {
 		t.Errorf("Expected PolicySandboxPreferred to persist, got %s", app.GetRecommendationPolicy())
 	}
-}
 
+	statuses := app.GetProviderStatuses()
+	if len(statuses) < 6 {
+		t.Errorf("Expected at least 6 ProviderStatus entries, got %d", len(statuses))
+	}
+
+	upd := app.CheckAllUpdates()
+	if upd.CheckedAt.IsZero() {
+		t.Errorf("Expected non-zero CheckedAt timestamp on UpdateSummary")
+	}
+
+	prev := app.PreviewUpdates([]string{})
+	if prev.PreviewID == "" || !prev.RequiresExplicitApprove {
+		t.Errorf("Expected PreviewUpdates to generate non-empty PreviewID requiring explicit approval, got %+v", prev)
+	}
+	aborted := app.ExecuteApprovedUpdates(prev.PreviewID, false)
+	if aborted.Succeeded != 0 {
+		t.Errorf("Expected unapproved ExecuteApprovedUpdates to abort cleanly")
+	}
+}

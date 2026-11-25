@@ -1,40 +1,189 @@
 package catalog
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
 )
 
-// CompareVersions performs provider-aware version comparison.
-// Returns > 0 if a > b, < 0 if a < b, 0 if equal.
+// ErrNotComparableVersion indicates that one or both strings are release tracks/channels
+// (e.g. Flatpak "stable"/"beta", Snap "latest/edge") or span incompatible packaging epochs.
+var ErrNotComparableVersion = errors.New("values represent release channels or incompatible versioning schemes")
+
+// VersionComparator defines a strictly provider-isolated package version comparator.
+type VersionComparator interface {
+	Supports(provider string) bool
+	Compare(a, b string) (int, error)
+}
+
+// IsReleaseTrack returns true when a string denotes a Flatpak branch or Snap channel
+// rather than an ordinal numeric package version.
+func IsReleaseTrack(v string) bool {
+	low := strings.ToLower(strings.TrimSpace(v))
+	if low == "" {
+		return true
+	}
+	switch low {
+	case "latest", "stable", "beta", "master", "edge", "candidate", "nightly", "canary":
+		return true
+	}
+	if strings.Contains(low, "/") {
+		// e.g. Snap "latest/stable", "latest/edge", "2.x/candidate"
+		return true
+	}
+	return false
+}
+
+// ALPMComparator implements Arch Linux libalpm vercmp semantics ([epoch:]pkgver[-pkgrel]).
+type ALPMComparator struct{}
+
+func (ALPMComparator) Supports(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "pacman", "aur", "paru", "repository":
+		return true
+	default:
+		return false
+	}
+}
+
+func (ALPMComparator) Compare(a, b string) (int, error) {
+	va, vb := strings.TrimSpace(a), strings.TrimSpace(b)
+	if IsReleaseTrack(va) || IsReleaseTrack(vb) {
+		return 0, ErrNotComparableVersion
+	}
+	return compareALPM(va, vb), nil
+}
+
+// DebianComparator implements Debian dpkg version semantics ([epoch:]upstream[-debian_revision]).
+type DebianComparator struct{}
+
+func (DebianComparator) Supports(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "apt", "deb":
+		return true
+	default:
+		return false
+	}
+}
+
+func (DebianComparator) Compare(a, b string) (int, error) {
+	va, vb := strings.TrimSpace(a), strings.TrimSpace(b)
+	if IsReleaseTrack(va) || IsReleaseTrack(vb) {
+		return 0, ErrNotComparableVersion
+	}
+	return compareDebian(va, vb), nil
+}
+
+// RPMComparator implements RPM EVR semantics with tilde (~) and caret (^) awareness.
+type RPMComparator struct{}
+
+func (RPMComparator) Supports(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "dnf", "rpm", "zypper":
+		return true
+	default:
+		return false
+	}
+}
+
+func (RPMComparator) Compare(a, b string) (int, error) {
+	va, vb := strings.TrimSpace(a), strings.TrimSpace(b)
+	if IsReleaseTrack(va) || IsReleaseTrack(vb) {
+		return 0, ErrNotComparableVersion
+	}
+	return compareRPM(va, vb), nil
+}
+
+// NumericReleaseComparator compares concrete numeric/semver strings for Flatpak, Snap, GitHub,
+// while rejecting non-version channels/branches.
+type NumericReleaseComparator struct{}
+
+func (NumericReleaseComparator) Supports(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "flatpak", "snap", "github", "appimage":
+		return true
+	default:
+		return false
+	}
+}
+
+func (NumericReleaseComparator) Compare(a, b string) (int, error) {
+	va, vb := strings.TrimSpace(a), strings.TrimSpace(b)
+	if IsReleaseTrack(va) || IsReleaseTrack(vb) {
+		return 0, ErrNotComparableVersion
+	}
+	return compareGenericSemver(va, vb), nil
+}
+
+var registeredComparators = []VersionComparator{
+	ALPMComparator{},
+	DebianComparator{},
+	RPMComparator{},
+	NumericReleaseComparator{},
+}
+
+// GetVersionComparator selects the isolated comparator for a package ecosystem.
+func GetVersionComparator(provider string) VersionComparator {
+	for _, c := range registeredComparators {
+		if c.Supports(provider) {
+			return c
+		}
+	}
+	return NumericReleaseComparator{}
+}
+
+// CompareVersionsSafe compares two versions using provider-specific logic and returns
+// ErrNotComparableVersion if either string is a channel/branch or ecosystems are incomparable.
+func CompareVersionsSafe(provider, a, b string) (int, error) {
+	comp := GetVersionComparator(provider)
+	return comp.Compare(a, b)
+}
+
+// CompareCrossEcosystem compares two offers only when both have comparable numeric versions
+// without incompatible epoch schemes (epochs remain strictly distro-scoped!).
+func CompareCrossEcosystem(provA, verA, provB, verB string) (int, error) {
+	if IsReleaseTrack(verA) || IsReleaseTrack(verB) {
+		return 0, ErrNotComparableVersion
+	}
+	pa := strings.ToLower(strings.TrimSpace(provA))
+	pb := strings.ToLower(strings.TrimSpace(provB))
+	if pa == pb {
+		return CompareVersionsSafe(pa, verA, verB)
+	}
+	// Epochs (1:2.0 vs 2.0) are distro packaging metadata, not cross-ecosystem comparable
+	ea, ra := splitEpoch(strings.TrimSpace(verA))
+	eb, rb := splitEpoch(strings.TrimSpace(verB))
+	if ea != eb {
+		return 0, fmt.Errorf("%w: distro epochs differ (%d vs %d)", ErrNotComparableVersion, ea, eb)
+	}
+	upA, _ := splitLastRelease(strings.TrimPrefix(strings.TrimPrefix(ra, "v"), "V"))
+	upB, _ := splitLastRelease(strings.TrimPrefix(strings.TrimPrefix(rb, "v"), "V"))
+	return rpmvercmp(upA, upB, true), nil
+}
+
+// CompareVersions provides backwards-compatible int comparison inside single-provider contexts.
 func CompareVersions(provider, a, b string) int {
 	va := strings.TrimSpace(a)
 	vb := strings.TrimSpace(b)
 	if va == vb {
 		return 0
 	}
-	if va == "" || strings.EqualFold(va, "latest") {
-		if vb == "" || strings.EqualFold(vb, "latest") {
+	if IsReleaseTrack(va) {
+		if IsReleaseTrack(vb) {
 			return 0
 		}
 		return -1
 	}
-	if vb == "" || strings.EqualFold(vb, "latest") {
+	if IsReleaseTrack(vb) {
 		return 1
 	}
-
-	prov := strings.ToLower(strings.TrimSpace(provider))
-	switch prov {
-	case "pacman", "aur", "paru", "repository":
-		return compareALPM(va, vb)
-	case "apt", "deb":
-		return compareDebian(va, vb)
-	case "dnf", "rpm", "zypper":
-		return compareRPM(va, vb)
-	default:
-		return compareGenericSemver(va, vb)
+	cmp, err := CompareVersionsSafe(provider, va, vb)
+	if err != nil {
+		return strings.Compare(va, vb)
 	}
+	return cmp
 }
 
 func splitEpoch(v string) (int, string) {
@@ -49,6 +198,9 @@ func splitEpoch(v string) (int, string) {
 
 // compareALPM implements Arch libalpm vercmp semantics: [epoch:]pkgver[-pkgrel]
 func compareALPM(a, b string) int {
+	if a == b {
+		return 0
+	}
 	ea, ra := splitEpoch(a)
 	eb, rb := splitEpoch(b)
 	if ea != eb {
@@ -64,7 +216,8 @@ func compareALPM(a, b string) int {
 	if c := rpmvercmp(va, vb, false); c != 0 {
 		return c
 	}
-	if rela == "" && relb == "" {
+	// libalpm rule: pkgrel is only compared when both strings specify a release!
+	if rela == "" || relb == "" {
 		return 0
 	}
 	return rpmvercmp(rela, relb, false)
@@ -88,7 +241,7 @@ func compareDebian(a, b string) int {
 	return rpmvercmp(rela, relb, true)
 }
 
-// compareRPM implements RPM EVR comparison with '~' pre-release handling
+// compareRPM implements RPM EVR comparison with '~' and '^' handling
 func compareRPM(a, b string) int {
 	ea, ra := splitEpoch(a)
 	eb, rb := splitEpoch(b)
@@ -127,7 +280,7 @@ func rpmvercmp(a, b string, handleTilde bool) int {
 	i, j := 0, 0
 	na, nb := len(a), len(b)
 
-	for i < na || j < nb {
+	for i < na && j < nb {
 		for i < na && !isAlnum(a[i]) && (!handleTilde || a[i] != '~') {
 			i++
 		}
@@ -206,10 +359,30 @@ func rpmvercmp(a, b string, handleTilde bool) int {
 		}
 	}
 
+	for i < na && !isAlnum(a[i]) && (!handleTilde || a[i] != '~') {
+		i++
+	}
+	for j < nb && !isAlnum(b[j]) && (!handleTilde || b[j] != '~') {
+		j++
+	}
 	if i >= na && j >= nb {
 		return 0
 	}
+	// Trailing separator check & libalpm rule: remaining alphabetic suffix (e.g. 1.5a) sorts older than 1.5,
+	// whereas remaining numeric segment (e.g. 1.5.1) sorts newer!
+	if handleTilde && i < na && a[i] == '~' {
+		return -1
+	}
+	if handleTilde && j < nb && b[j] == '~' {
+		return 1
+	}
 	if i < na {
+		if isAlpha(a[i]) {
+			return -1
+		}
+		return 1
+	}
+	if isAlpha(b[j]) {
 		return 1
 	}
 	return -1

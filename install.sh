@@ -3,17 +3,23 @@ set -euEo pipefail
 
 APP_NAME="arjax"
 REPO_ARCHIVE_URL="https://github.com/AdmGenSameer/archpkg-helper/archive/refs/heads/main.zip"
+FALLBACK_ARCHIVE_URL="https://github.com/AdmGenSameer/arjax/archive/refs/heads/main.zip"
 INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/arjax"
 VENV_DIR="$INSTALL_ROOT/venv"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+GLOBAL_BIN_DIR="/usr/local/bin"
 DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+INITIAL_PATH="${PATH:-}"
 SOURCE_SPEC="$REPO_ARCHIVE_URL"
+SOURCE_DIR=""
+ARCHIVE_TMP_DIR=""
 SUDO=""
 UNINSTALL_MODE=false
 PURGE_CONFIG=false
 INSTALL_DEPS=false
 YES_TO_ALL=false
+WITH_GUI=false
 LOG_FILE="${TMPDIR:-/tmp}/arjax-install-${UID:-$(id -u 2>/dev/null || echo 0)}.log"
 touch "$LOG_FILE" 2>/dev/null || LOG_FILE="$(mktemp /tmp/arjax-install-XXXXXX.log 2>/dev/null || echo "/tmp/arjax-install.log")"
 INSTALL_SUCCESS=false
@@ -36,6 +42,9 @@ for arg in "$@"; do
             YES_TO_ALL=true
             INSTALL_DEPS=true
             ;;
+        --with-gui)
+            WITH_GUI=true
+            ;;
         --log-file=*)
             LOG_FILE="${arg#*=}"
             ;;
@@ -55,8 +64,16 @@ done
 
 trap 'FAILED_LINE="$LINENO"; FAILED_CMD="$BASH_COMMAND"' ERR
 
+cleanup_tmp() {
+    if [ -n "$ARCHIVE_TMP_DIR" ] && [ -d "$ARCHIVE_TMP_DIR" ]; then
+        rm -rf "$ARCHIVE_TMP_DIR" 2>/dev/null || true
+    fi
+}
+
 on_exit() {
     local exit_code="$1"
+    tput cnorm 2>/dev/null || true
+    cleanup_tmp
     if [ "$INSTALL_SUCCESS" = true ] || [ "$exit_code" -eq 0 ] || [ "$UNINSTALL_MODE" = true ]; then
         return
     fi
@@ -105,6 +122,221 @@ die() {
     exit 1
 }
 
+# Render a deterministic progress bar instead of an infinite spinner.
+render_progress_bar() {
+    local pct="$1"
+    local label="$2"
+    local width=24
+
+    [ "$pct" -lt 0 ] 2>/dev/null && pct=0
+    [ "$pct" -gt 100 ] 2>/dev/null && pct=100
+
+    local filled=$(( pct * width / 100 ))
+    local empty=$(( width - filled ))
+    local bar_fill=""
+    local bar_empty=""
+
+    if [ "$filled" -gt 0 ]; then
+        bar_fill="$(printf '%*s' "$filled" '' | tr ' ' '#')"
+    fi
+    if [ "$empty" -gt 0 ]; then
+        bar_empty="$(printf '%*s' "$empty" '' | tr ' ' '-')"
+    fi
+
+    # Truncate overly long labels so the bar never wraps on narrow terminals.
+    if [ "${#label}" -gt 52 ]; then
+        label="${label:0:49}..."
+    fi
+
+    if [ -t 1 ]; then
+        printf "\r\033[K  [%s%s] %3d%%  %s" "$bar_fill" "$bar_empty" "$pct" "$label"
+    fi
+}
+
+# Execute a background command while tracking real progress from its output log.
+run_with_progress() {
+    local label="$1"
+    local mode="$2"
+    local cmd_str="$3"
+    local task_log
+    task_log="$(mktemp /tmp/arjax-task-XXXXXX.log 2>/dev/null || mktemp)"
+
+    eval "$cmd_str" < /dev/null > "$task_log" 2>&1 &
+    local pid=$!
+
+    local pct=5
+    local last_pct=-1
+    local status="$label"
+    local tick=0
+
+    if [ -t 1 ]; then
+        tput civis 2>/dev/null || true
+        render_progress_bar "$pct" "$status"
+    else
+        echo "[*] $label..."
+    fi
+
+    while kill -0 "$pid" 2>/dev/null; do
+        tick=$((tick + 1))
+        if [ -f "$task_log" ]; then
+            case "$mode" in
+                pkgmgr)
+                    local dl_hits inst_hits
+                    dl_hits="$(grep -cE '(^(Get:|Err:|Ign:|Retrieving )|Downloading|downloading|getting packages)' "$task_log" 2>/dev/null || true)"
+                    inst_hits="$(grep -cE '(^(Unpacking|Setting up|Preparing to unpack|Installing|Upgrading|Verifying|Cleanup|Running hooks)|installing packages)' "$task_log" 2>/dev/null || true)"
+                    dl_hits="${dl_hits:-0}"
+                    inst_hits="${inst_hits:-0}"
+                    if grep -qE '(Processing triggers|Running post-transaction|ldconfig)' "$task_log" 2>/dev/null; then
+                        pct=93
+                        status="$label (finalizing)"
+                    elif [ "$inst_hits" -gt 0 ]; then
+                        pct=$((62 + inst_hits * 3))
+                        [ "$pct" -gt 92 ] && pct=92
+                        status="$label (installing packages)"
+                    elif [ "$dl_hits" -gt 0 ]; then
+                        pct=$((22 + dl_hits * 4))
+                        [ "$pct" -gt 60 ] && pct=60
+                        status="$label (downloading packages)"
+                    elif grep -qiE '(Reading package lists|Synchronizing|Metadata|Building dependency tree|Resolving dependencies)' "$task_log" 2>/dev/null; then
+                        pct=18
+                        status="$label (resolving dependencies)"
+                    else
+                        pct=$((8 + (tick % 10)))
+                    fi
+                    ;;
+                pip)
+                    local last_line col_hits dl_hits
+                    col_hits="$(grep -c '^Collecting ' "$task_log" 2>/dev/null || true)"
+                    dl_hits="$(grep -c '^  Downloading ' "$task_log" 2>/dev/null || true)"
+                    col_hits="${col_hits:-0}"
+                    dl_hits="${dl_hits:-0}"
+                    if grep -q '^Successfully installed' "$task_log" 2>/dev/null; then
+                        pct=98
+                        status="$label (complete)"
+                    elif grep -q '^Installing collected packages' "$task_log" 2>/dev/null; then
+                        pct=$((78 + (tick % 16)))
+                        status="$label (installing packages)"
+                    elif grep -q 'Building wheel' "$task_log" 2>/dev/null; then
+                        pct=72
+                        status="$label (building wheel)"
+                    elif [ "$dl_hits" -gt 0 ]; then
+                        last_line="$(grep -E '^  Downloading ' "$task_log" 2>/dev/null | tail -n 1 | awk '{print $2}' || true)"
+                        last_line="${last_line##*/}"
+                        pct=$((35 + dl_hits * 3))
+                        [ "$pct" -gt 70 ] && pct=70
+                        status="$label (downloading ${last_line:-packages})"
+                    elif [ "$col_hits" -gt 0 ]; then
+                        last_line="$(grep '^Collecting ' "$task_log" 2>/dev/null | tail -n 1 | sed 's/^Collecting //' | awk '{print $1}' || true)"
+                        pct=$((12 + col_hits * 2))
+                        [ "$pct" -gt 35 ] && pct=35
+                        status="$label (collecting ${last_line:-deps})"
+                    else
+                        pct=$((6 + (tick % 8)))
+                    fi
+                    ;;
+                go)
+                    local mod_hits pkg_hits last_pkg
+                    mod_hits="$(grep -c '^go: downloading ' "$task_log" 2>/dev/null || true)"
+                    pkg_hits="$(grep -cE '^[a-zA-Z0-9._-]+/' "$task_log" 2>/dev/null || true)"
+                    mod_hits="${mod_hits:-0}"
+                    pkg_hits="${pkg_hits:-0}"
+                    if [ "$pkg_hits" -gt 0 ]; then
+                        last_pkg="$(grep -E '^[a-zA-Z0-9._-]+/' "$task_log" 2>/dev/null | tail -n 1 | awk -F'/' '{print $NF}' || true)"
+                        pct=$((42 + pkg_hits))
+                        [ "$pct" -gt 96 ] && pct=96
+                        status="$label (compiling ${last_pkg:-packages})"
+                    elif [ "$mod_hits" -gt 0 ]; then
+                        last_pkg="$(grep '^go: downloading ' "$task_log" 2>/dev/null | tail -n 1 | awk '{print $3}' | awk -F'/' '{print $NF}' || true)"
+                        pct=$((12 + mod_hits * 2))
+                        [ "$pct" -gt 40 ] && pct=40
+                        status="$label (downloading ${last_pkg:-modules})"
+                    else
+                        pct=$((8 + (tick % 10)))
+                    fi
+                    ;;
+                *)
+                    pct=$((10 + (tick * 3)))
+                    [ "$pct" -gt 92 ] && pct=92
+                    ;;
+            esac
+        fi
+
+        if [ -t 1 ]; then
+            render_progress_bar "$pct" "$status"
+        elif [ "$pct" -ge $((last_pct + 20)) ]; then
+            echo "  [$pct%] $status"
+            last_pct="$pct"
+        fi
+        sleep 0.2
+    done
+
+    wait "$pid"
+    local exit_code=$?
+
+    if [ -s "$task_log" ]; then
+        cat "$task_log" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+
+    if [ -t 1 ]; then
+        tput cnorm 2>/dev/null || true
+        if [ "$exit_code" -eq 0 ]; then
+            render_progress_bar 100 "$label - Done"
+            echo ""
+        else
+            render_progress_bar "$pct" "$label - Failed"
+            echo ""
+        fi
+    fi
+
+    if [ "$exit_code" -ne 0 ] && [ -s "$task_log" ]; then
+        echo "Recent task output:" >&2
+        tail -n 12 "$task_log" | sed 's/^/    /' >&2
+    fi
+
+    rm -f "$task_log"
+    return "$exit_code"
+}
+
+# Download a URL displaying a live byte-accurate progress bar.
+download_with_progress() {
+    local url="$1"
+    local dest="$2"
+    local label="$3"
+
+    log "$label..."
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Downloading $url -> $dest" >> "$LOG_FILE" 2>/dev/null || true
+
+    if command -v curl >/dev/null 2>&1; then
+        if [ -t 2 ] || [ -t 1 ]; then
+            curl -fL --progress-bar "$url" -o "$dest"
+        else
+            curl -fsSL "$url" -o "$dest"
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if [ -t 2 ] || [ -t 1 ]; then
+            wget -q --show-progress "$url" -O "$dest"
+        else
+            wget -q "$url" -O "$dest"
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 - "$url" "$dest" <<'PY'
+import sys, urllib.request
+url, dest = sys.argv[1], sys.argv[2]
+def report(block_num, block_size, total_size):
+    if total_size > 0 and sys.stdout.isatty():
+        pct = min(100, int(block_num * block_size * 100 / total_size))
+        filled = pct * 24 // 100
+        sys.stdout.write(f"\r  [{'#' * filled}{'-' * (24 - filled)}] {pct:3d}%  Downloading")
+        sys.stdout.flush()
+urllib.request.urlretrieve(url, dest, reporthook=report)
+if sys.stdout.isatty():
+    sys.stdout.write("\n")
+PY
+    else
+        die "Neither curl, wget, nor python3 is available to download $url"
+    fi
+}
+
 detect_distro_family() {
     if [ ! -f /etc/os-release ]; then
         echo "unknown"
@@ -132,8 +364,6 @@ detect_distro_family() {
 }
 
 get_os_info() {
-    local distro_family
-    distro_family="$(detect_distro_family)"
     local os_name="Unknown Linux"
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -147,6 +377,30 @@ get_os_info() {
 
 check_python_version() {
     python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >/dev/null 2>&1
+}
+
+check_go_version() {
+    command -v go >/dev/null 2>&1 || return 1
+    local raw_ver
+    raw_ver="$(go version 2>/dev/null | sed -n 's/.*go\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)"
+    [ -n "$raw_ver" ] || return 0
+    local major minor
+    major="${raw_ver%%.*}"
+    minor="${raw_ver#*.}"
+    # Go >= 1.21 is required so GOTOOLCHAIN=auto can build go1.24+ modules reliably.
+    if [ "$major" -gt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -ge 21 ]; }; then
+        return 0
+    fi
+    return 1
+}
+
+# Use sudo only when we are not already root.
+init_sudo() {
+    if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+    else
+        SUDO="sudo"
+    fi
 }
 
 install_python_system_package() {
@@ -165,7 +419,7 @@ install_python_system_package() {
             $SUDO dnf install -y python3 python3-pip python3-virtualenv
             ;;
         suse)
-            $SUDO zypper install -y python3 python3-pip python3-virtualenv
+            $SUDO zypper --non-interactive install -y python3 python3-pip python3-virtualenv
             ;;
         *)
             return 1
@@ -188,7 +442,7 @@ install_git_package() {
             $SUDO dnf install -y git
             ;;
         suse)
-            $SUDO zypper install -y git
+            $SUDO zypper --non-interactive install -y git
             ;;
         *)
             return 1
@@ -211,7 +465,7 @@ install_go_package() {
             $SUDO dnf install -y golang
             ;;
         suse)
-            $SUDO zypper install -y go
+            $SUDO zypper --non-interactive install -y go
             ;;
         *)
             return 1
@@ -274,27 +528,6 @@ run_sudo_auth() {
     return 0
 }
 
-show_spinner() {
-    local pid=$1
-    local message="$2"
-    local delay=0.1
-    local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-    # Hide cursor
-    tput civis 2>/dev/null || true
-    while kill -0 "$pid" 2>/dev/null; do
-        for c in "${spin[@]}"; do
-            if ! kill -0 "$pid" 2>/dev/null; then
-                break
-            fi
-            printf "\r\033[K %s %s" "$c" "$message"
-            sleep $delay
-        done
-    done
-    # Restore cursor and clear line
-    tput cnorm 2>/dev/null || true
-    printf "\r\033[K"
-}
-
 request_dep_install() {
     local dep_name="$1"
     local install_cmds="$2"
@@ -321,41 +554,17 @@ request_dep_install() {
 
     if [ "$do_install" = true ]; then
         if run_sudo_auth "$dep_name"; then
-            local log_file
-            log_file="$(mktemp /tmp/arjax-install-XXXXXX.log 2>/dev/null || mktemp)"
-
-            # Run action in background, isolated from stdin
-            eval "$install_action" < /dev/null > "$log_file" 2>&1 &
-            local action_pid=$!
-
-            # Show spinner while running
-            show_spinner "$action_pid" "Installing $dep_name..."
-
-            wait "$action_pid"
-            local exit_code=$?
-
-            if [ -s "$log_file" ]; then
-                cat "$log_file" >> "$LOG_FILE" 2>/dev/null || true
-            fi
-
-            if [ "$exit_code" -eq 0 ]; then
+            if run_with_progress "Installing $dep_name" "pkgmgr" "$install_action"; then
                 log "$dep_name installed successfully"
-                rm -f "$log_file"
                 return 0
             else
                 log_error "Failed to install $dep_name automatically"
-                if [ -s "$log_file" ]; then
-                    echo "Installation output:"
-                    tail -n 10 "$log_file" | sed 's/^/    /'
-                fi
-                rm -f "$log_file"
             fi
         fi
     fi
 
-    # If we didn't install or installation failed:
     echo ""
-    echo "[x] $dep_name was not found."
+    echo "[x] $dep_name is required and was not installed."
     echo ""
     if [ -n "$extra_msg" ]; then
         echo -e "$extra_msg"
@@ -368,15 +577,6 @@ request_dep_install() {
     echo ""
     echo "Or rerun this installer with --install-deps to install missing dependencies automatically."
     exit 1
-}
-
-# Use sudo only when we are not already root.
-init_sudo() {
-    if [ "$(id -u)" -eq 0 ]; then
-        SUDO=""
-    else
-        SUDO="sudo"
-    fi
 }
 
 # Install Python packaging support using the system package manager when ensurepip is not available.
@@ -397,7 +597,7 @@ install_python_support() {
             $SUDO dnf install -y python3-pip python3-virtualenv
             ;;
         suse)
-            $SUDO zypper install -y python3-pip python3-virtualenv
+            $SUDO zypper --non-interactive install -y python3-pip python3-virtualenv
             ;;
         *)
             return 1
@@ -416,7 +616,7 @@ ensure_git() {
 
     local distro_family
     distro_family="$(detect_distro_family)"
-    
+
     local display_cmds=""
     case "$distro_family" in
         arch) display_cmds="sudo pacman -S git" ;;
@@ -429,76 +629,41 @@ ensure_git() {
     request_dep_install "git" "$display_cmds" "install_git_package $distro_family" "Arjax requires git to download/update recipes."
 }
 
+# Go is compulsory: Arjax requires the compiled arjax-provider Go engine & TUI.
 ensure_go() {
     if command -v go >/dev/null 2>&1; then
-        log "Go toolchain is already installed ($(go version | awk '{print $3}'))"
-        return 0
+        local go_ver
+        go_ver="$(go version | awk '{print $3}')"
+        if check_go_version; then
+            log "Go toolchain detected ($go_ver)"
+            return 0
+        else
+            die "Detected Go $go_ver is too old. Arjax requires Go 1.21+ (go.mod targets go 1.24.2). Upgrade Go via your package manager or https://go.dev/dl/ and rerun."
+        fi
     fi
 
     local distro_family
     distro_family="$(detect_distro_family)"
-    
+
     local display_cmds=""
     case "$distro_family" in
         arch) display_cmds="sudo pacman -S go" ;;
         debian) display_cmds="sudo apt update\n    sudo apt install -y golang-go" ;;
         fedora) display_cmds="sudo dnf install -y golang" ;;
         suse) display_cmds="sudo zypper install -y go" ;;
-        *) display_cmds="Install Go using your package manager" ;;
+        *) display_cmds="Install Go 1.21+ from https://go.dev/dl/ or your package manager" ;;
     esac
 
-    log "Go compiler was not detected on this system."
-    log "Arjax includes an optional Go Provider Engine binary for ultra-fast parallel searches and TUI."
-    log "Note: Go is OPTIONAL. If skipped, Arjax runs smoothly using built-in Python providers."
-    echo ""
+    log "Go compiler is compulsory to build the Arjax Go Provider Engine & TUI."
+    request_dep_install "Go compiler" "$display_cmds" "install_go_package $distro_family" "Arjax requires Go (1.21+ / 1.24+) to compile the compulsory arjax-provider binary."
 
-    local should_install=false
-    if [ "$INSTALL_DEPS" = true ]; then
-        should_install=true
-    elif [ "$YES_TO_ALL" = true ]; then
-        should_install=false
-    else
-        if prompt_yes_no "Install Go compiler automatically to compile provider engine? [y/N]:" "N"; then
-            should_install=true
-        else
-            log "Skipping Go installation. Arjax will use Python fallback providers."
-            return 0
-        fi
+    if ! command -v go >/dev/null 2>&1; then
+        die "Go compiler was not found on PATH after installation."
     fi
-
-    if [ "$should_install" = true ]; then
-        if run_sudo_auth "Go compiler"; then
-            local log_file
-            log_file="$(mktemp /tmp/arjax-go-install-XXXXXX.log 2>/dev/null || mktemp)"
-            eval "install_go_package $distro_family" < /dev/null > "$log_file" 2>&1 &
-            local action_pid=$!
-            show_spinner "$action_pid" "Installing Go compiler..."
-            wait "$action_pid"
-            local exit_code=$?
-            if [ -s "$log_file" ]; then
-                cat "$log_file" >> "$LOG_FILE" 2>/dev/null || true
-            fi
-
-            if [ "$exit_code" -eq 0 ] && command -v go >/dev/null 2>&1; then
-                log "Go compiler installed successfully ($(go version | awk '{print $3}'))"
-                rm -f "$log_file"
-                return 0
-            else
-                log "Notice: Go compiler installation did not complete."
-                if [ -s "$log_file" ]; then
-                    echo "Installer output:"
-                    tail -n 10 "$log_file" | sed 's/^/    /'
-                fi
-                rm -f "$log_file"
-            fi
-        else
-            log "Notice: Sudo authentication not completed. Skipping Go installation."
-        fi
-        log "Arjax will continue installation and use high-performance Python providers."
-    else
-        log "Skipping Go installation. Arjax will use Python fallback providers."
+    if ! check_go_version; then
+        die "Installed Go version ($(go version | awk '{print $3}')) is older than Go 1.21. Please install Go 1.21+ from https://go.dev/dl/."
     fi
-    return 0
+    log "Go compiler ready ($(go version | awk '{print $3}'))"
 }
 
 ensure_python() {
@@ -548,14 +713,39 @@ ensure_python() {
     fi
 }
 
+# Resolve local checkout or download the repository archive once for both Python & Go builds.
 ensure_source() {
-    if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
+    if [ -f "$SCRIPT_DIR/pyproject.toml" ] && [ -d "$SCRIPT_DIR/arjax-provider-engine" ]; then
+        SOURCE_DIR="$SCRIPT_DIR"
         SOURCE_SPEC="$SCRIPT_DIR"
-        log "Using local checkout at $SOURCE_SPEC"
-    else
-        # Fallback for web-based installs where the repo is not present locally.
-        log "Using remote archive source"
+        log "Using local checkout at $SOURCE_DIR"
+        return 0
     fi
+
+    ARCHIVE_TMP_DIR="$(mktemp -d /tmp/arjax-source-XXXXXX 2>/dev/null || mktemp -d)"
+    local zip_file="$ARCHIVE_TMP_DIR/arjax-source.zip"
+
+    if ! download_with_progress "$REPO_ARCHIVE_URL" "$zip_file" "Downloading Arjax source archive"; then
+        log "Primary archive failed; downloading from fallback archive URL..."
+        download_with_progress "$FALLBACK_ARCHIVE_URL" "$zip_file" "Downloading fallback Arjax archive" \
+            || die "Failed to download Arjax source archive from $REPO_ARCHIVE_URL or $FALLBACK_ARCHIVE_URL."
+    fi
+
+    [ -s "$zip_file" ] || die "Downloaded source archive is empty."
+
+    run_with_progress "Extracting source archive" "generic" \
+        "python3 -c \"import zipfile; zipfile.ZipFile('$zip_file').extractall('$ARCHIVE_TMP_DIR')\"" \
+        || die "Failed to extract Arjax source archive."
+
+    local extracted_root
+    extracted_root="$(find "$ARCHIVE_TMP_DIR" -mindepth 1 -maxdepth 2 -name "pyproject.toml" -exec dirname {} \; 2>/dev/null | head -n 1)"
+    if [ -z "$extracted_root" ] || [ ! -d "$extracted_root" ]; then
+        die "Could not locate extracted Arjax project directory."
+    fi
+
+    SOURCE_DIR="$extracted_root"
+    SOURCE_SPEC="$extracted_root"
+    log "Source ready at $SOURCE_DIR"
 }
 
 # Create an isolated Python environment so the install does not affect system packages.
@@ -580,11 +770,10 @@ create_venv() {
     fi
 
     if [ ! -x "$VENV_DIR/bin/pip" ]; then
-        log "Bootstrapping pip using standalone get-pip..."
-        if command -v curl >/dev/null 2>&1; then
-            curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - >> "$LOG_FILE" 2>&1 || true
-        elif command -v wget >/dev/null 2>&1; then
-            wget -qO- https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - >> "$LOG_FILE" 2>&1 || true
+        local get_pip_file="${ARCHIVE_TMP_DIR:-/tmp}/get-pip.py"
+        download_with_progress "https://bootstrap.pypa.io/get-pip.py" "$get_pip_file" "Downloading get-pip.py" || true
+        if [ -s "$get_pip_file" ]; then
+            run_with_progress "Bootstrapping pip" "pip" "\"$VENV_DIR/bin/python\" \"$get_pip_file\"" || true
         fi
     fi
 
@@ -593,7 +782,7 @@ create_venv() {
     fi
 }
 
-# Install Arjax and the GUI dependency into the private venv.
+# Install the Python CLI/TUI package into the private venv (no PyQt5).
 install_package() {
     local pip_bin="$VENV_DIR/bin/pip"
 
@@ -601,68 +790,132 @@ install_package() {
         die "pip is unavailable inside the virtual environment."
     fi
 
-    log "Upgrading packaging tools in virtual environment..."
-    "$pip_bin" install --upgrade pip setuptools wheel >> "$LOG_FILE" 2>&1 || true
+    run_with_progress "Upgrading packaging tools" "pip" \
+        "\"$pip_bin\" install --upgrade pip setuptools wheel" || true
 
-    log "Installing Arjax from $SOURCE_SPEC..."
-    if ! "$pip_bin" install --upgrade "$SOURCE_SPEC" >> "$LOG_FILE" 2>&1; then
-        local fallback_url="https://github.com/AdmGenSameer/arjax/archive/refs/heads/main.zip"
-        if [ "$SOURCE_SPEC" != "$fallback_url" ]; then
-            log "Retrying installation with fallback archive URL..."
-            "$pip_bin" install --upgrade "$fallback_url" >> "$LOG_FILE" 2>&1 || die "Failed to install Arjax from $fallback_url."
-        else
-            die "Failed to install Arjax from $SOURCE_SPEC."
-        fi
-    fi
+    run_with_progress "Installing Arjax CLI & Python core" "pip" \
+        "\"$pip_bin\" install --upgrade \"$SOURCE_SPEC\"" \
+        || die "Failed to install Arjax from $SOURCE_SPEC."
 
-    log "Installing GUI dependency (PyQt5)..."
-    "$pip_bin" install --upgrade PyQt5 >> "$LOG_FILE" 2>&1 || log "Notice: PyQt5 could not be installed automatically. Arjax CLI and TUI are fully functional; run 'arjax gui-install' to install GUI support later."
+    [ -x "$VENV_DIR/bin/arjax" ] || die "Installation finished but $VENV_DIR/bin/arjax entry point is missing."
 }
 
+# Compile the compulsory Go Provider Engine binary.
 build_go_engine() {
-    local engine_dir="$SCRIPT_DIR/arjax-provider-engine"
+    command -v go >/dev/null 2>&1 || die "Go compiler is compulsory but missing."
+
+    local engine_dir="$SOURCE_DIR/arjax-provider-engine"
     if [ ! -d "$engine_dir" ]; then
-        if [ -d "$INSTALL_ROOT/arjax-provider-engine" ]; then
-            engine_dir="$INSTALL_ROOT/arjax-provider-engine"
-        fi
+        die "Compulsory Go engine source directory not found at $engine_dir."
     fi
 
-    local tmp_engine=""
-    if [ ! -d "$engine_dir" ] && command -v go >/dev/null 2>&1; then
-        tmp_engine="$(mktemp -d /tmp/arjax-engine-XXXXXX 2>/dev/null || mktemp -d)"
-        local zip_file="$tmp_engine/repo.zip"
-        if command -v curl >/dev/null 2>&1; then
-            curl -fsSL "$REPO_ARCHIVE_URL" -o "$zip_file" >> "$LOG_FILE" 2>&1 || true
-        elif command -v wget >/dev/null 2>&1; then
-            wget -qO "$zip_file" "$REPO_ARCHIVE_URL" >> "$LOG_FILE" 2>&1 || true
-        fi
-        if [ -f "$zip_file" ] && command -v python3 >/dev/null 2>&1; then
-            python3 -c "import zipfile; zipfile.ZipFile('$zip_file').extractall('$tmp_engine')" >> "$LOG_FILE" 2>&1 || true
-            local extracted_dir
-            extracted_dir="$(find "$tmp_engine" -maxdepth 2 -type d -name "arjax-provider-engine" 2>/dev/null | head -n 1)"
-            if [ -n "$extracted_dir" ] && [ -d "$extracted_dir" ]; then
-                engine_dir="$extracted_dir"
-            fi
-        fi
+    mkdir -p "$BIN_DIR"
+    rm -f "$BIN_DIR/arjax-provider"
+
+    run_with_progress "Compiling Arjax Go Provider Engine" "go" \
+        "cd \"$engine_dir\" && GOTOOLCHAIN=auto go build -v -o \"$BIN_DIR/arjax-provider\" ." \
+        || die "Failed to compile compulsory Arjax Go Provider Engine."
+
+    if [ ! -x "$BIN_DIR/arjax-provider" ]; then
+        die "Compiled binary missing at $BIN_DIR/arjax-provider."
+    fi
+    log "Arjax Go Provider Engine installed to $BIN_DIR/arjax-provider"
+}
+
+# Build the native Wails desktop GUI when graphical support (or --with-gui) is present.
+build_wails_gui() {
+    if ! has_graphical_environment && [ "$WITH_GUI" != true ]; then
+        log "CLI-only environment detected; skipping native Wails GUI build (pass --with-gui to force build)."
+        return 0
     fi
 
-    if [ -d "$engine_dir" ] && command -v go >/dev/null 2>&1; then
-        log "Compiling Arjax Go Provider Engine..."
-        (
-            cd "$engine_dir"
-            go build -o "$BIN_DIR/arjax-provider" main.go >> "$LOG_FILE" 2>&1 || true
-        )
-        if [ -x "$BIN_DIR/arjax-provider" ]; then
-            log "Arjax Go Provider Engine successfully compiled and installed to $BIN_DIR/arjax-provider"
+    local gui_dir="$SOURCE_DIR/arjax-gui"
+    if [ ! -d "$gui_dir" ]; then
+        return 0
+    fi
+
+    # Build frontend bundle if dist is not already compiled
+    if [ ! -d "$gui_dir/frontend/dist" ]; then
+        if command -v npm >/dev/null 2>&1; then
+            run_with_progress "Installing Wails frontend packages" "generic" \
+                "cd \"$gui_dir/frontend\" && npm install --no-audit --no-fund" || {
+                    log "Notice: Frontend npm install failed; skipping arjax-gui binary build."
+                    return 0
+                }
+            run_with_progress "Building Wails frontend bundle" "generic" \
+                "cd \"$gui_dir/frontend\" && npm run build" || {
+                    log "Notice: Frontend build failed; skipping arjax-gui binary build."
+                    return 0
+                }
         else
-            log "Notice: Go compilation was not completed. Arjax will seamlessly run using built-in Python providers."
+            log "Notice: Node.js/npm not found to build arjax-gui frontend/dist; skipping native GUI build."
+            return 0
+        fi
+    fi
+
+    local build_tags=""
+    if command -v pkg-config >/dev/null 2>&1; then
+        if pkg-config --exists webkit2gtk-4.1 2>/dev/null && ! pkg-config --exists webkit2gtk-4.0 2>/dev/null; then
+            build_tags="-tags webkit2_41"
+        elif ! pkg-config --exists webkit2gtk-4.1 2>/dev/null && ! pkg-config --exists webkit2gtk-4.0 2>/dev/null; then
+            log "Notice: WebKit2GTK dev headers not found; skipping native Wails GUI binary build (CLI and Go TUI work without it)."
+            return 0
+        fi
+    fi
+
+    mkdir -p "$BIN_DIR"
+    if run_with_progress "Compiling Native Wails GUI (arjax-gui)" "go" \
+        "cd \"$gui_dir\" && GOTOOLCHAIN=auto go build $build_tags -v -o \"$BIN_DIR/arjax-gui\" ."; then
+        if [ -x "$BIN_DIR/arjax-gui" ]; then
+            log "Native Wails GUI compiled and installed to $BIN_DIR/arjax-gui"
         fi
     else
-        log "Go compiler or engine source not present. Arjax will use Python fallback provider system."
+        log "Notice: Native Wails GUI build did not complete cleanly (CLI and Go TUI remain ready). See $LOG_FILE for details."
+    fi
+}
+
+# Link executables into /usr/local/bin when permitted so `arjax` is immediately available in active shells.
+link_global_binaries() {
+    if [ ! -d "$GLOBAL_BIN_DIR" ]; then
+        return 0
     fi
 
-    if [ -n "$tmp_engine" ] && [ -d "$tmp_engine" ]; then
-        rm -rf "$tmp_engine"
+    local link_prefix=""
+    if [ -w "$GLOBAL_BIN_DIR" ]; then
+        link_prefix=""
+    else
+        init_sudo
+        if [ -z "$SUDO" ]; then
+            link_prefix=""
+        elif $SUDO -n true 2>/dev/null; then
+            link_prefix="$SUDO"
+        elif [ -c /dev/tty ] || [ -t 0 ]; then
+            case ":${INITIAL_PATH}:" in
+                *:"$BIN_DIR":*) return 0 ;;
+            esac
+            if prompt_yes_no "Link '$APP_NAME' into $GLOBAL_BIN_DIR so it is available immediately in this terminal? [Y/n]:" "Y"; then
+                if run_sudo_auth "$GLOBAL_BIN_DIR symlinks"; then
+                    link_prefix="$SUDO"
+                else
+                    return 0
+                fi
+            else
+                return 0
+            fi
+        else
+            return 0
+        fi
+    fi
+
+    ${link_prefix:+$link_prefix }ln -sf "$BIN_DIR/$APP_NAME" "$GLOBAL_BIN_DIR/$APP_NAME" 2>/dev/null || true
+    if [ -x "$BIN_DIR/arjax-provider" ]; then
+        ${link_prefix:+$link_prefix }ln -sf "$BIN_DIR/arjax-provider" "$GLOBAL_BIN_DIR/arjax-provider" 2>/dev/null || true
+    fi
+    if [ -x "$BIN_DIR/arjax-gui" ]; then
+        ${link_prefix:+$link_prefix }ln -sf "$BIN_DIR/arjax-gui" "$GLOBAL_BIN_DIR/arjax-gui" 2>/dev/null || true
+    fi
+    if [ -L "$GLOBAL_BIN_DIR/$APP_NAME" ] || [ -x "$GLOBAL_BIN_DIR/$APP_NAME" ]; then
+        log "Linked $APP_NAME commands into $GLOBAL_BIN_DIR for immediate terminal access"
     fi
 }
 
@@ -681,6 +934,8 @@ EOF
         *:"$BIN_DIR":*) ;;
         *) export PATH="$BIN_DIR:$PATH" ;;
     esac
+
+    link_global_binaries
 }
 
 remove_shell_path_block() {
@@ -693,7 +948,6 @@ from pathlib import Path
 import sys
 
 shell_file = Path(sys.argv[1])
-block_file = Path(sys.argv[2])
 block1 = "\n# arjax-helper: make user-local commands available\nif [ -d \"$HOME/.local/bin\" ]; then\n    export PATH=\"$HOME/.local/bin:$PATH\"\nfi\n"
 block2 = "\n# archpkg-helper: make user-local commands available\nif [ -d \"$HOME/.local/bin\" ]; then\n    export PATH=\"$HOME/.local/bin:$PATH\"\nfi\n"
 
@@ -708,8 +962,20 @@ PY
 
 uninstall_installation() {
     log "Removing Arjax installation..."
-    rm -f "$BIN_DIR/$APP_NAME" "$DESKTOP_DIR/arjax.desktop" "$DESKTOP_DIR/archpkg-helper.desktop"
+    rm -f "$BIN_DIR/$APP_NAME" "$BIN_DIR/arjax-provider" "$BIN_DIR/arjax-gui" \
+          "$DESKTOP_DIR/arjax.desktop" "$DESKTOP_DIR/archpkg-helper.desktop" "$DESKTOP_DIR/arjax-helper.desktop"
     rm -rf "$INSTALL_ROOT"
+
+    init_sudo
+    for global_name in "$APP_NAME" "arjax-provider" "arjax-gui"; do
+        if [ -L "$GLOBAL_BIN_DIR/$global_name" ] || [ -e "$GLOBAL_BIN_DIR/$global_name" ]; then
+            if [ -w "$GLOBAL_BIN_DIR" ] || [ -z "$SUDO" ]; then
+                rm -f "$GLOBAL_BIN_DIR/$global_name" 2>/dev/null || true
+            elif $SUDO -n true 2>/dev/null; then
+                $SUDO rm -f "$GLOBAL_BIN_DIR/$global_name" 2>/dev/null || true
+            fi
+        fi
+    done
 
     remove_shell_path_block "$HOME/.profile" || true
     remove_shell_path_block "$HOME/.bashrc" || true
@@ -780,6 +1046,10 @@ install_desktop_entry() {
     fi
 
     mkdir -p "$DESKTOP_DIR"
+    local exec_cmd="$BIN_DIR/$APP_NAME gui"
+    if [ -x "$BIN_DIR/arjax-gui" ]; then
+        exec_cmd="$BIN_DIR/arjax-gui"
+    fi
 
     cat > "$DESKTOP_DIR/arjax-helper.desktop" <<EOF
 [Desktop Entry]
@@ -787,8 +1057,8 @@ Version=1.0
 Type=Application
 Name=Arjax
 GenericName=Package Manager
-Comment=Cross-distribution package manager with GUI
-Exec=$BIN_DIR/$APP_NAME gui
+Comment=Cross-distribution package manager with native GUI
+Exec=$exec_cmd
 TryExec=$BIN_DIR/$APP_NAME
 Icon=system-software-install
 Terminal=false
@@ -811,8 +1081,8 @@ install_man_page() {
     log "Installing man page..."
     local MAN_DIR="$HOME/.local/share/man/man1"
     mkdir -p "$MAN_DIR"
-    if [ -f "$SCRIPT_DIR/data/man/man1/arjax.1" ]; then
-        cp "$SCRIPT_DIR/data/man/man1/arjax.1" "$MAN_DIR/arjax.1"
+    if [ -f "$SOURCE_DIR/data/man/man1/arjax.1" ]; then
+        cp "$SOURCE_DIR/data/man/man1/arjax.1" "$MAN_DIR/arjax.1"
         log "Man page installed to $MAN_DIR/arjax.1 (view with: man arjax)"
     fi
 }
@@ -828,7 +1098,7 @@ configure_arch_profile() {
     log "Choose your Arjax profile:"
     echo "    1) normal (recommended) - Arjax handles updates/news/trust checks automatically"
     echo "    2) advanced - full manual control"
-    
+
     local ARJAX_PROFILE_CHOICE="1"
     if [ "$YES_TO_ALL" = true ]; then
         log "Non-interactive mode: selecting normal profile"
@@ -884,6 +1154,7 @@ EOF
 
     log "Profile configured: $arjax_user_mode"
 }
+
 main() {
     if [ "$UNINSTALL_MODE" = true ]; then
         uninstall_installation
@@ -899,6 +1170,7 @@ main() {
     create_venv
     install_package
     build_go_engine
+    build_wails_gui
     create_launcher
     ensure_shell_path
     install_desktop_entry
@@ -913,13 +1185,25 @@ main() {
     echo "    arjax               # Launch interactive TUI (Default)"
     echo "    arjax search <pkg>  # Search for packages"
     echo "    arjax install <pkg> # Install packages"
-    echo "    arjax gui           # Launch native desktop GUI"
+    echo "    arjax gui           # Launch native Wails desktop GUI"
     echo "    arjax --help        # Show all CLI commands"
     echo ""
-    echo "Your shell startup files were updated so ~/.local/bin is available in new sessions."
+
+    local resolved_cmd=""
+    resolved_cmd="$(PATH="$INITIAL_PATH" command -v "$APP_NAME" 2>/dev/null || true)"
+    if [ -n "$resolved_cmd" ]; then
+        echo "Ready: '$APP_NAME' is immediately available at $resolved_cmd."
+    else
+        echo "IMPORTANT: Reload your current shell PATH before running 'arjax' in this terminal:"
+        echo "    source ~/.bashrc   # (or: export PATH=\"$BIN_DIR:\$PATH\")"
+    fi
     echo ""
     if has_graphical_environment; then
-        echo "The GUI is also available in your application menu."
+        if [ -x "$BIN_DIR/arjax-gui" ]; then
+            echo "Native Wails GUI is installed at $BIN_DIR/arjax-gui and in your application menu."
+        else
+            echo "Graphical environment detected; desktop launcher added (see log if GUI build was skipped)."
+        fi
     else
         echo "CLI-only environment detected, so no application menu entry was created."
     fi
@@ -928,4 +1212,3 @@ main() {
 }
 
 main "$@"
-

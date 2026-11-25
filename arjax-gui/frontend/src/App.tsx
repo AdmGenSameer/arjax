@@ -8,6 +8,7 @@ import { CategoryPage } from './pages/CategoryPage';
 import { PackagePage } from './pages/Package';
 import { InstalledPage } from './pages/Installed';
 import { DownloadsPage } from './pages/Downloads';
+import { UpdateCenterPage } from './pages/UpdateCenter';
 import { SettingsPage } from './pages/Settings';
 import { DistroInfoDTO } from './types';
 
@@ -52,8 +53,8 @@ export const App: React.FC = () => {
             <Route path="/package/:name" element={<PackagePage />} />
             <Route path="/installed" element={<InstalledPage />} />
             <Route path="/downloads" element={<DownloadsPage />} />
-            <Route path="/downloads-and-updates" element={<DownloadsPage />} />
-            <Route path="/updates" element={<DownloadsPage />} />
+            <Route path="/downloads-and-updates" element={<UpdateCenterPage />} />
+            <Route path="/updates" element={<UpdateCenterPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>

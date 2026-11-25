@@ -152,8 +152,17 @@ func (ap *AURProvider) Remove(ctx context.Context, pkg models.Package) (models.R
 
 func (ap *AURProvider) Update(ctx context.Context) (models.Result, error) {
 	start := time.Now()
+	helper := ""
 	if ap.useParu && utils.CommandExists("paru") {
-		res := utils.RunCommand(ctx, "paru", "-Sua", "--noconfirm")
+		helper = "paru"
+	} else if utils.CommandExists("yay") {
+		helper = "yay"
+	} else if utils.CommandExists("paru") {
+		helper = "paru"
+	}
+	if helper != "" {
+		// Retain interactive/explicit approval semantics cleanly without unconditional --noconfirm on AUR upgrades
+		res := utils.RunCommand(ctx, helper, "-Sua")
 		return models.Result{
 			Package:    "aur-update",
 			Provider:   "aur",
@@ -168,8 +177,9 @@ func (ap *AURProvider) Update(ctx context.Context) (models.Result, error) {
 	return models.Result{
 		Package:  "aur-update",
 		Provider: "aur",
-		Success:  true,
-	}, nil
+		Success:  false,
+		Error:    "No AUR helper (paru or yay) found on host to run -Sua upgrade",
+	}, fmt.Errorf("no AUR helper available for -Sua")
 }
 
 func (ap *AURProvider) Info(ctx context.Context, pkgName string) (models.PackageInfo, error) {

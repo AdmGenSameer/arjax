@@ -153,6 +153,27 @@ export const Sidebar: React.FC<SidebarProps> = ({ distroInfo }) => {
             </NavLink>
 
             <NavLink
+              to="/updates"
+              className={({ isActive }) =>
+                `flex items-center justify-between px-3 py-2 rounded-md font-medium text-[13px] transition group ${
+                  isActive
+                    ? 'fluent-indicator bg-white/[0.08] text-white'
+                    : 'text-fluent-muted hover:text-white hover:bg-white/[0.05]'
+                }`
+              }
+            >
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-[19px] text-fluent-dim group-hover:text-fluent-blue transition">
+                  system_update
+                </span>
+                <span>Update Center</span>
+              </div>
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                Hub
+              </span>
+            </NavLink>
+
+            <NavLink
               to="/downloads"
               className={({ isActive }) =>
                 `flex items-center justify-between px-3 py-2 rounded-md font-medium text-[13px] transition group ${
@@ -166,7 +187,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ distroInfo }) => {
                 <span className="material-symbols-outlined text-[19px] text-fluent-dim group-hover:text-fluent-blue transition">
                   downloading
                 </span>
-                <span>Downloads &amp; Updates</span>
+                <span>Downloads</span>
               </div>
               <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-fluent-blue text-white">
                 3

@@ -431,47 +431,49 @@ def handle_upgrade_command() -> None:
             border_style="red"
         ))
 
+def _find_wails_gui_binary() -> Optional[Path]:
+    """Locate the compiled native Wails desktop GUI binary (arjax-gui)."""
+    candidates: List[Path] = []
+    which_bin = shutil.which("arjax-gui")
+    if which_bin:
+        candidates.append(Path(which_bin))
+    candidates.extend([
+        Path("/usr/local/bin/arjax-gui"),
+        Path.home() / ".local" / "bin" / "arjax-gui",
+        Path(__file__).resolve().parents[2] / "arjax-gui" / "build" / "bin" / "arjax-gui",
+        Path(__file__).resolve().parents[2] / "arjax-gui" / "arjax-gui",
+    ])
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def install_gui_dependencies() -> None:
-    """Install GUI dependencies into the current ArchPkg Python environment."""
-    logger.info("Installing GUI dependencies into the current environment")
-
-    console.print(Panel(
-        "[bold cyan]Installing GUI support...[/bold cyan]\n\n"
-        "This installs [cyan]PyQt5[/cyan] into the same Python environment that runs [cyan]arjax[/cyan].",
-        title="GUI Setup",
-        border_style="cyan"
-    ))
-
-    install_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "PyQt5"]
-
-    try:
-        result = subprocess.run(install_cmd, check=False)
-        if result.returncode != 0:
-            logger.error("GUI dependency installation failed with exit code %s", result.returncode)
-            console.print(Panel(
-                "[red]Failed to install GUI dependencies automatically.[/red]\n\n"
-                f"Manual fallback:\n[cyan]{' '.join(install_cmd)}[/cyan]",
-                title="GUI Install Failed",
-                border_style="red"
-            ))
-            raise typer.Exit(1)
-
+    """Check or compile the native Wails desktop GUI binary (PyQt5 is no longer used)."""
+    logger.info("Checking native Wails GUI status")
+    gui_bin = _find_wails_gui_binary()
+    if gui_bin:
         console.print(Panel(
-            "[bold green]GUI support installed successfully.[/bold green]\n\n"
-            "You can now run: [cyan]arjax gui[/cyan]",
+            f"[bold green]Native Wails GUI is already installed.[/bold green]\n\n"
+            f"Binary: [cyan]{gui_bin}[/cyan]\n"
+            "Launch with: [cyan]arjax gui[/cyan]",
             title="GUI Ready",
             border_style="green"
         ))
-    except Exception as e:
-        PackageHelperLogger.log_exception(logger, "Unexpected error installing GUI dependencies", e)
-        console.print(Panel(
-            f"[red]Could not install GUI dependencies.[/red]\n\n"
-            f"[bold]Error:[/bold] {str(e)}\n\n"
-            f"Manual fallback:\n[cyan]{' '.join(install_cmd)}[/cyan]",
-            title="GUI Install Error",
-            border_style="red"
-        ))
-        raise typer.Exit(1)
+        return
+
+    console.print(Panel(
+        "[bold yellow]Native Wails GUI (arjax-gui) binary was not found.[/bold yellow]\n\n"
+        "Arjax uses the native Go + Wails desktop GUI rather than PyQt5.\n"
+        "To build and install it on a desktop system with Go, Node.js, and WebKit2GTK:\n"
+        "  [cyan]cd arjax-gui/frontend && npm install && npm run build[/cyan]\n"
+        "  [cyan]cd .. && go build -o ~/.local/bin/arjax-gui .[/cyan]\n"
+        "Or re-run [cyan]install.sh --with-gui[/cyan].",
+        title="Native Wails GUI Setup",
+        border_style="cyan"
+    ))
+    raise typer.Exit(1)
 
 
 def _remove_startup_path_block(shell_file: Path) -> bool:
@@ -809,7 +811,7 @@ Search once. Install from the best available source.
 
 [bold yellow]🖥️ Interactive TUI & Desktop GUI[/bold yellow]
     [cyan]arjax tui[/cyan]                  Interactive terminal UI (Deps, History, Orphans, Stats, Sync)
-    [cyan]arjax gui[/cyan]                  Desktop PyQt5 GUI
+    [cyan]arjax gui[/cyan]                  Native Desktop GUI (Wails)
 
 [bold yellow]📖 Declarative Recipes & Auto-Sync[/bold yellow]
     [cyan]arjax recipes list[/cyan]         View local vs upstream recipe versions
@@ -1573,19 +1575,23 @@ def gui(
     Supports all distributions (Arch, Debian, Fedora, openSUSE, etc.)
     """
     try:
-        from arjax.interfaces.gui import launch_gui
-        
         if debug_mode:
             PackageHelperLogger.set_debug_mode(True)
-        
-        console.print("[cyan]Launching desktop GUI...[/cyan]")
-        launch_gui()
-        
-    except ImportError as e:
-        console.print("[red]GUI dependencies not installed.[/red]")
-        console.print("Run: arjax add gui")
-        console.print(f"Error: {str(e)}")
+
+        gui_bin = _find_wails_gui_binary()
+        if gui_bin:
+            console.print(f"[cyan]Launching native Wails GUI ({gui_bin})...[/cyan]")
+            result = subprocess.run([str(gui_bin)], check=False)
+            if result.returncode != 0:
+                raise typer.Exit(result.returncode)
+            return
+
+        console.print("[red]Native Wails GUI binary (arjax-gui) not found.[/red]")
+        console.print("Re-run [cyan]install.sh --with-gui[/cyan] in a desktop session or build from [cyan]arjax-gui/[/cyan].")
         raise typer.Exit(1)
+
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]Failed to launch GUI: {str(e)}[/red]")
         raise typer.Exit(1)

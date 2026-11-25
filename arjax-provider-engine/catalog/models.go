@@ -31,33 +31,33 @@ const (
 // PackageOffer represents a distinct, uniquely identified distribution channel/format for an application.
 // Authority note: executable commands are never accepted from the frontend; installations execute by OfferID.
 type PackageOffer struct {
-	ID                   string       `json:"id"`                   // Stable identity: provider:repo:pkg:arch:branch:channel
-	AppID                string       `json:"appId"`                // Canonical AppStream ID, e.g. "org.mozilla.firefox"
-	PackageName          string       `json:"packageName"`          // Technical package name
-	Provider             string       `json:"provider"`             // "pacman", "aur", "flatpak", "snap", "deb", "rpm", "appimage", "github"
-	Repository           string       `json:"repository"`           // "extra", "core", "flathub", "aur", "snapcraft"
-	Source               string       `json:"source"`               // Compatibility alias for Repository
-	Architecture         string       `json:"architecture"`         // "x86_64", "aarch64", "any", "noarch"
-	Version              string       `json:"version"`              // Provider version string, e.g. "1:124.0.1-1"
-	InstalledVersion     string       `json:"installedVersion"`     // Installed version if THIS specific offer is installed
-	Branch               string       `json:"branch,omitempty"`     // Flatpak branch (e.g. "stable", "beta")
-	Channel              string       `json:"channel,omitempty"`    // Snap tracking channel (e.g. "latest/stable", "latest/edge")
-	DownloadSize         string       `json:"downloadSize"`         // Formatted download size
-	InstalledSize        string       `json:"installedSize"`        // Formatted installed size
-	InstallScope         InstallScope `json:"installScope"`         // Isolation level ("sandboxed", "system", "user")
-	Scope                InstallScope `json:"scope"`                // Explicit scope field
-	Permissions          []string     `json:"permissions"`          // Sandbox / host capability permissions
-	DependencyCount      int          `json:"dependencyCount"`      // Estimated extra dependencies needed
+	ID                   string       `json:"id"`                // Stable identity: provider:repo:pkg:arch:branch:channel
+	AppID                string       `json:"appId"`             // Canonical AppStream ID, e.g. "org.mozilla.firefox"
+	PackageName          string       `json:"packageName"`       // Technical package name
+	Provider             string       `json:"provider"`          // "pacman", "aur", "flatpak", "snap", "deb", "rpm", "appimage", "github"
+	Repository           string       `json:"repository"`        // "extra", "core", "flathub", "aur", "snapcraft"
+	Source               string       `json:"source"`            // Compatibility alias for Repository
+	Architecture         string       `json:"architecture"`      // "x86_64", "aarch64", "any", "noarch"
+	Version              string       `json:"version"`           // Provider version string, e.g. "1:124.0.1-1"
+	InstalledVersion     string       `json:"installedVersion"`  // Installed version if THIS specific offer is installed
+	Branch               string       `json:"branch,omitempty"`  // Flatpak branch (e.g. "stable", "beta")
+	Channel              string       `json:"channel,omitempty"` // Snap tracking channel (e.g. "latest/stable", "latest/edge")
+	DownloadSize         string       `json:"downloadSize"`      // Formatted download size
+	InstalledSize        string       `json:"installedSize"`     // Formatted installed size
+	InstallScope         InstallScope `json:"installScope"`      // Isolation level ("sandboxed", "system", "user")
+	Scope                InstallScope `json:"scope"`             // Explicit scope field
+	Permissions          []string     `json:"permissions"`       // Sandbox / host capability permissions
+	DependencyCount      int          `json:"dependencyCount"`   // Estimated extra dependencies needed
 	Dependencies         []string     `json:"dependencies,omitempty"`
-	IsInstalled          bool         `json:"isInstalled"`          // Whether THIS specific offer is installed
-	IsEligible           bool         `json:"isEligible"`           // Whether offer is eligible on current host under current policy
-	IneligibleReason     string       `json:"ineligibleReason"`     // Explanation if not eligible
-	TrustLevel           TrustLevel   `json:"trustLevel"`           // Separated trust category ("official", "verified", "community", ...)
-	SignatureStatus      string       `json:"signatureStatus"`      // "verified-keyring", "ostree-signed", "unverified-script", etc.
-	Trust                SourceTrust  `json:"trust"`                // Full provenance and trust metadata
-	Score                float64      `json:"score"`                // Policy recommendation ranking score (0.0 - 100.0)
-	RecommendationBadge  string       `json:"recommendationBadge"`  // "Recommended", "Official", "Sandboxed", "Community", "Installed", "Unavailable"
-	RecommendationReason string       `json:"recommendationReason"` // Human-readable explanation of recommendation
+	IsInstalled          bool         `json:"isInstalled"`              // Whether THIS specific offer is installed
+	IsEligible           bool         `json:"isEligible"`               // Whether offer is eligible on current host under current policy
+	IneligibleReason     string       `json:"ineligibleReason"`         // Explanation if not eligible
+	TrustLevel           TrustLevel   `json:"trustLevel"`               // Separated trust category ("official", "verified", "community", ...)
+	SignatureStatus      string       `json:"signatureStatus"`          // "verified-keyring", "ostree-signed", "unverified-script", etc.
+	Trust                SourceTrust  `json:"trust"`                    // Full provenance and trust metadata
+	Score                float64      `json:"score"`                    // Policy recommendation ranking score (0.0 - 100.0)
+	RecommendationBadge  string       `json:"recommendationBadge"`      // "Recommended", "Official", "Sandboxed", "Community", "Installed", "Unavailable"
+	RecommendationReason string       `json:"recommendationReason"`     // Human-readable explanation of recommendation
 	CommandPreview       string       `json:"commandPreview,omitempty"` // Read-only educational preview; never executed directly
 }
 
@@ -112,9 +112,9 @@ type SearchProviderStatusDTO struct {
 // ProgressiveSearchBatchDTO emits incremental deltas (added/updated apps) over Wails runtime events
 type ProgressiveSearchBatchDTO struct {
 	SearchEventBase
-	AddedApps   []UnifiedApplication `json:"addedApps"`             // Newly discovered applications in this batch
-	UpdatedApps []UnifiedApplication `json:"updatedApps"`           // Existing applications enriched with new offers
-	Apps        []UnifiedApplication `json:"apps,omitempty"`        // Full sorted snapshot for compatibility with sync/simple consumers
+	AddedApps   []UnifiedApplication `json:"addedApps"`      // Newly discovered applications in this batch
+	UpdatedApps []UnifiedApplication `json:"updatedApps"`    // Existing applications enriched with new offers
+	Apps        []UnifiedApplication `json:"apps,omitempty"` // Full sorted snapshot for compatibility with sync/simple consumers
 	IsFinal     bool                 `json:"isFinal"`
 }
 

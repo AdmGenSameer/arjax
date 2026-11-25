@@ -174,7 +174,7 @@ func TestVersionComparisonProviderSpecific(t *testing.T) {
 		a, b     string
 		wantSign int // 1, -1, 0
 	}{
-		{"pacman", "1:1.0.0-1", "2.0.0-1", 1},    // Epoch wins in ALPM
+		{"pacman", "1:1.0.0-1", "2.0.0-1", 1},     // Epoch wins in ALPM
 		{"pacman", "124.0.2-1", "124.0.10-1", -1}, // Numeric segment compare
 		{"pacman", "124.0.1-2", "124.0.1-1", 1},   // pkgrel wins
 		{"deb", "1.0~rc1", "1.0", -1},             // Debian tilde sorts earlier than final release
@@ -262,12 +262,12 @@ func TestProgressiveSearchExpressiveEventsAndOutOfOrderMocks(t *testing.T) {
 	cm := NewCatalogManager(pm, nil, nil, DefaultCatalogConfig(), nil)
 
 	var (
-		mu             sync.Mutex
-		startedCalled  bool
-		doneCalled     bool
-		errEvents      int
-		batches        []ProgressiveSearchBatchDTO
-		sequences      []int64
+		mu            sync.Mutex
+		startedCalled bool
+		doneCalled    bool
+		errEvents     int
+		batches       []ProgressiveSearchBatchDTO
+		sequences     []int64
 	)
 
 	cm.ProgressiveSearch().StreamSearchWithCallbacks(context.Background(), "s1", "vlc", ProgressiveSearchCallbacks{

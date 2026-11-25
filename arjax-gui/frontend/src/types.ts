@@ -77,6 +77,15 @@ export interface CategoryDTO {
   description?: string;
 }
 
+export interface PackageProvenanceDTO {
+  origin: string;
+  publisher: string;
+  signingKey: string;
+  artifactDigest: string;
+  verification: string;
+  verifiedAt: string;
+}
+
 export interface SourceTrustDTO {
   trustLevel: 'official' | 'verified' | 'community' | 'third-party' | 'unknown' | string;
   officialRepo: boolean;
@@ -86,6 +95,7 @@ export interface SourceTrustDTO {
   buildRecipe: string;
   verified: boolean;
   summary: string;
+  provenance?: PackageProvenanceDTO;
 }
 
 export interface PackageOfferDTO {
@@ -206,8 +216,12 @@ export interface TransactionDTO {
   logs: string[];
   canCancelSafely: boolean;
   cancelRequested: boolean;
+  exitCode?: number;
   errorCode?: string;
   errorMessage?: string;
+  recoveryStatus?: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface ProviderCapabilityDTO {
@@ -223,4 +237,85 @@ export interface ProviderCapabilityDTO {
   officialDistro: boolean;
   availableOnHost: boolean;
   statusNote: string;
+}
+
+export interface ProviderStatusDTO {
+  provider: string;
+  displayName: string;
+  supported: boolean;
+  installed: boolean;
+  available: boolean;
+  healthy: boolean;
+  statusMessage: string;
+  capabilities: ProviderCapabilityDTO;
+  lastHealthCheck: string;
+}
+
+export interface AvailableUpdateDTO {
+  offerId: string;
+  appId: string;
+  packageName: string;
+  displayName: string;
+  provider: string;
+  repository: string;
+  installScope?: string;
+  branch?: string;
+  installedVersion: string;
+  availableVersion: string;
+  downloadSize: string;
+  isSecurity: boolean;
+  partialUpgradeSafe?: boolean;
+  upgradeGroupPolicy?: string;
+  trustLevel: string;
+  summary: string;
+}
+
+export interface UpdateSummaryDTO {
+  totalCount: number;
+  providerCount: number;
+  securityCount: number;
+  requiresFullSysUpgrade?: boolean;
+  byProvider: Record<string, number>;
+  updates: AvailableUpdateDTO[];
+  providerErrors?: Record<string, string>;
+  notes?: string[];
+  checkedAt: string;
+}
+
+export interface UpdateItemOutcomeDTO {
+  offerId: string;
+  packageName: string;
+  provider: string;
+  installScope?: string;
+  success: boolean;
+  skippedUpToDate?: boolean;
+  errorCode?: string;
+  transactionId?: string;
+  errorMessage?: string;
+}
+
+export interface TransactionPreviewDTO {
+  previewId: string;
+  requestedOfferIds: string[];
+  effectiveOfferIds: string[];
+  packagesToUpgrade: AvailableUpdateDTO[];
+  packagesToInstall: string[];
+  packagesToRemove: string[];
+  estimatedDownloadSize: string;
+  requiresOfficialFirst: boolean;
+  includesFullSysUpgrade: boolean;
+  includesAurBuild: boolean;
+  warnings: string[];
+  providerErrors?: Record<string, string>;
+  requiresExplicitApproval: boolean;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface UpdateBatchResultDTO {
+  totalRequested: number;
+  succeeded: number;
+  failed: number;
+  results: UpdateItemOutcomeDTO[];
+  note: string;
 }

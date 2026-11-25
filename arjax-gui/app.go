@@ -12,6 +12,7 @@ import (
 
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/appstream"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog/updates"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/config"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/icons"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
@@ -64,21 +65,21 @@ type EnginePackageDTO struct {
 
 // InstalledPackageDTO represents an installed application on the system
 type InstalledPackageDTO struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	DisplayName  string `json:"displayName"`
-	Version      string `json:"version"`
-	Provider     string `json:"provider"`
-	Format       string `json:"format"`
-	Size         string `json:"size"`
-	SizeMB       int    `json:"sizeMB"`
-	HasUpdate    bool   `json:"hasUpdate"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	DisplayName   string `json:"displayName"`
+	Version       string `json:"version"`
+	Provider      string `json:"provider"`
+	Format        string `json:"format"`
+	Size          string `json:"size"`
+	SizeMB        int    `json:"sizeMB"`
+	HasUpdate     bool   `json:"hasUpdate"`
 	UpdateVersion string `json:"updateVersion,omitempty"`
-	Category     string `json:"category"`
-	Icon         string `json:"icon"`
-	LastActivity string `json:"lastActivity"`
-	IsNative     bool   `json:"isNative"`
-	IsSharedCore bool   `json:"isSharedCore"`
+	Category      string `json:"category"`
+	Icon          string `json:"icon"`
+	LastActivity  string `json:"lastActivity"`
+	IsNative      bool   `json:"isNative"`
+	IsSharedCore  bool   `json:"isSharedCore"`
 }
 
 // UpdateItemDTO represents a pending package update
@@ -189,6 +190,15 @@ func (a *App) getInstalledMap(ctx context.Context) map[string]string {
 // so we can call runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Reconcile any interrupted transactions persisted prior to crash/restart
+	if a.catalogMgr != nil {
+		go func() {
+			recovered := a.catalogMgr.RecoverTransactions(ctx, nil)
+			if len(recovered) > 0 && a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "transactions:recovered", recovered)
+			}
+		}()
+	}
 	// Warm top desktop app metadata in the background
 	if a.crawler != nil {
 		a.crawler.BackgroundCrawlPopular(ctx, 40)
@@ -556,11 +566,18 @@ func (a *App) GetInstalledPackages() []InstalledPackageDTO {
 
 	var pkgs []InstalledPackageDTO
 
-	// 1. Check Flatpak applications
+	// 1. Check Flatpak applications separately across --user and --system scopes
 	if utils.CommandExists("flatpak") {
-		cmd := exec.CommandContext(ctx, "flatpak", "list", "--app")
-		out, err := cmd.Output()
-		if err == nil {
+		for _, scope := range []string{"user", "system"} {
+			cmd := exec.CommandContext(ctx, "flatpak", "list", "--app", "--"+scope, "--columns=name,application,version")
+			out, err := cmd.Output()
+			if err != nil {
+				continue
+			}
+			formatLabel := "Flatpak (System Scope)"
+			if scope == "user" {
+				formatLabel = "Flatpak (User Scope)"
+			}
 			scanner := bufio.NewScanner(strings.NewReader(string(out)))
 			for scanner.Scan() {
 				line := scanner.Text()
@@ -578,7 +595,7 @@ func (a *App) GetInstalledPackages() []InstalledPackageDTO {
 						DisplayName:  name,
 						Version:      version,
 						Provider:     "flatpak",
-						Format:       "Flatpak (Sandboxed)",
+						Format:       formatLabel,
 						Size:         "310 MB",
 						SizeMB:       310,
 						Category:     "apps",
@@ -1028,4 +1045,76 @@ func (a *App) GetRecommendationPolicy() string {
 		return string(catalog.PolicyRecommended)
 	}
 	return string(a.catalogMgr.GetPolicy())
+}
+
+// GetProviderStatuses probes runtime availability and service health across all tracked ecosystems
+func (a *App) GetProviderStatuses() []providers.ProviderStatus {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if a.catalogMgr == nil {
+		return providers.ProbeProviderStatuses(ctx, providers.DefaultCapabilityMatrix())
+	}
+	return a.catalogMgr.ProviderStatuses(ctx)
+}
+
+// CheckAllUpdates queries every enabled provider for pending updates in the Arjax Update Center
+func (a *App) CheckAllUpdates() updates.UpdateSummary {
+	if a.catalogMgr == nil {
+		return updates.UpdateSummary{ByProvider: map[string]int{}, Updates: []updates.AvailableUpdate{}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return a.catalogMgr.Updates().CheckAllUpdates(ctx)
+}
+
+// PreviewUpdates resolves pending updates and builds a confirmation preview without mutating system state
+func (a *App) PreviewUpdates(offerIDs []string) updates.TransactionPreview {
+	if a.catalogMgr == nil {
+		return updates.TransactionPreview{Warnings: []string{"CatalogManager not initialized"}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return a.catalogMgr.Updates().PreviewUpdates(ctx, offerIDs)
+}
+
+// ExecuteApprovedUpdates runs updates ONLY when explicit user approval is true for a valid previewID
+func (a *App) ExecuteApprovedUpdates(previewID string, approved bool) updates.UpdateBatchResult {
+	if a.catalogMgr == nil {
+		return updates.UpdateBatchResult{Note: "CatalogManager not initialized"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	return a.catalogMgr.Updates().ExecuteApprovedUpdates(ctx, previewID, approved, func(u catalog.TransactionDTO) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "transaction:update", u)
+		}
+	})
+}
+
+// ApplySelectedUpdates upgrades selected OfferIDs via coordinated independent provider transactions
+func (a *App) ApplySelectedUpdates(offerIDs []string) updates.UpdateBatchResult {
+	if a.catalogMgr == nil {
+		return updates.UpdateBatchResult{Note: "CatalogManager not initialized"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	return a.catalogMgr.Updates().UpdateSelected(ctx, offerIDs, func(u catalog.TransactionDTO) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "transaction:update", u)
+		}
+	})
+}
+
+// ApplyAllUpdates upgrades all discovered pending updates as independent provider transactions
+func (a *App) ApplyAllUpdates() updates.UpdateBatchResult {
+	if a.catalogMgr == nil {
+		return updates.UpdateBatchResult{Note: "CatalogManager not initialized"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	return a.catalogMgr.Updates().UpdateAll(ctx, func(u catalog.TransactionDTO) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "transaction:update", u)
+		}
+	})
 }

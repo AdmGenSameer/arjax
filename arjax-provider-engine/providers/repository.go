@@ -209,20 +209,34 @@ func (rp *RepositoryProvider) Remove(ctx context.Context, pkg models.Package) (m
 
 func (rp *RepositoryProvider) Update(ctx context.Context) (models.Result, error) {
 	start := time.Now()
+	bin := rp.pm
 	var args []string
 
 	switch rp.pm {
-	case "pacman":
-		args = []string{"-Syu", "--noconfirm"}
+	case "paru", "pacman":
+		// Arch Linux official repo updates ALWAYS perform a full system upgrade (pacman -Syu)
+		// without unconditional --noconfirm so replacements/conflicts cannot silently execute.
+		bin = "sudo"
+		args = []string{"pacman", "-Syu"}
 	case "apt":
-		args = []string{"update"}
+		bin = "sudo"
+		args = []string{"apt-get", "upgrade", "-y"}
 	case "dnf":
-		args = []string{"check-update"}
+		bin = "sudo"
+		args = []string{"dnf", "upgrade", "-y"}
 	case "zypper":
-		args = []string{"refresh"}
+		bin = "sudo"
+		args = []string{"zypper", "update", "-n"}
+	default:
+		return models.Result{
+			Package:  "system-update",
+			Provider: "repository",
+			Success:  false,
+			Error:    fmt.Sprintf("unsupported repository update manager: %s", rp.pm),
+		}, fmt.Errorf("unsupported repository update manager: %s", rp.pm)
 	}
 
-	execRes := utils.RunCommand(ctx, rp.pm, args...)
+	execRes := utils.RunCommand(ctx, bin, args...)
 	endTime := time.Now()
 
 	return models.Result{
