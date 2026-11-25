@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog/updates"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/config"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/providers"
@@ -188,5 +190,253 @@ func TestTUIInteractiveInstallProgress(t *testing.T) {
 		t.Errorf("expected statusMsg to indicate completion, got: %s", m.statusMsg)
 	}
 }
+
+func makeSampleUnifiedApps() []catalog.UnifiedApplication {
+	flatTrust := catalog.EvaluateSourceTrust("flatpak", "flathub", "io.zapsoft.Zapfast")
+	pacTrust := catalog.EvaluateSourceTrust("pacman", "extra", "zapfast")
+	aurTrust := catalog.EvaluateSourceTrust("aur", "aur", "zapfast-git")
+
+	return []catalog.UnifiedApplication{
+		{
+			AppID:          "io.zapsoft.Zapfast",
+			Name:           "zapfast",
+			Summary:        "Lightning-fast media stream toolkit",
+			Developer:      "ZapSoft Labs",
+			Homepage:       "https://zapsoft.org/zapfast",
+			License:        "GPL-3.0",
+			DefaultOfferID: "flatpak:flathub:io.zapsoft.zapfast",
+			IsInstalled:    true,
+			Offers: []catalog.PackageOffer{
+				{
+					ID:                  "flatpak:flathub:io.zapsoft.zapfast",
+					AppID:               "io.zapsoft.Zapfast",
+					PackageName:         "io.zapsoft.Zapfast",
+					Provider:            "flatpak",
+					Repository:          "flathub",
+					Version:             "2.8.4",
+					DownloadSize:        "184 MB",
+					InstallScope:        catalog.ScopeSandboxed,
+					Permissions:         []string{"network", "pulseaudio", "wayland/x11"},
+					Dependencies:        []string{"org.freedesktop.Platform//23.08"},
+					IsInstalled:         true,
+					IsEligible:          true,
+					TrustLevel:          flatTrust.TrustLevel,
+					SignatureStatus:     flatTrust.SignatureStatus,
+					Trust:               flatTrust,
+					Score:               92,
+					RecommendationBadge: "Recommended",
+					CommandPreview:      "flatpak install --user flathub io.zapsoft.Zapfast",
+				},
+				{
+					ID:              "pacman:extra:zapfast",
+					AppID:           "io.zapsoft.Zapfast",
+					PackageName:     "zapfast",
+					Provider:        "pacman",
+					Repository:      "extra",
+					Version:         "2.8.1",
+					DownloadSize:    "42 MB",
+					InstallScope:    catalog.ScopeSystem,
+					Permissions:     []string{"system-native", "host-filesystem"},
+					IsEligible:      true,
+					TrustLevel:      pacTrust.TrustLevel,
+					SignatureStatus: pacTrust.SignatureStatus,
+					Trust:           pacTrust,
+					Score:           86,
+					CommandPreview:  "sudo pacman -S zapfast",
+				},
+			},
+		},
+		{
+			AppID:   "brave-browser",
+			Name:    "brave-bin",
+			Summary: "Privacy-first Chromium browser",
+			Offers: []catalog.PackageOffer{
+				{
+					ID:              "aur:aur:brave-bin",
+					AppID:           "brave-browser",
+					PackageName:     "brave-bin",
+					Provider:        "aur",
+					Repository:      "aur",
+					Version:         "1.65.130",
+					DownloadSize:    "PKGBUILD",
+					InstallScope:    catalog.ScopeUser,
+					IsEligible:      true,
+					TrustLevel:      aurTrust.TrustLevel,
+					SignatureStatus: aurTrust.SignatureStatus,
+					Trust:           aurTrust,
+					Score:           68,
+					CommandPreview:  "paru -S brave-bin",
+				},
+			},
+		},
+	}
+}
+
+func TestTUICanonicalInspectorAndOfferCycling(t *testing.T) {
+	m := setupTestModel()
+	m.width = 160
+	m.height = 46
+	m.textInput.Blur()
+
+	res, _ := m.Update(searchDoneMsg{
+		query:       "zapfast",
+		unifiedApps: makeSampleUnifiedApps(),
+		duration:    18 * time.Millisecond,
+	})
+	m = res.(Model)
+
+	view := m.View()
+	for _, want := range []string{
+		"CANONICAL PACKAGES",
+		"PACKAGE INSPECTOR: zapfast",
+		"Trust & Integrity:",
+		"SELECT OFFER / DISTRIBUTION TARGET:",
+		"SANDBOX PERMISSIONS MATRIX:",
+		"STRATEGY RESOLUTION TREE:",
+		"flatpak install --user flathub io.zapsoft.Zapfast",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected Stitch inspector view to contain %q, got:\n%s", want, view)
+		}
+	}
+
+	// Press 'o' to cycle from Flatpak offer to Pacman Extra offer
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = res.(Model)
+	viewAfterCycle := m.View()
+	if !strings.Contains(viewAfterCycle, "sudo pacman -S zapfast") {
+		t.Errorf("expected offer cycling with 'o' to update preview to pacman command, got:\n%s", viewAfterCycle)
+	}
+
+	// Press 'v' to open provenance & recipe view
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	m = res.(Model)
+	if !m.showRecipeModal {
+		t.Errorf("expected showRecipeModal=true after pressing 'v'")
+	}
+	recipeView := m.View()
+	if !strings.Contains(recipeView, "PROVENANCE & RECIPE") {
+		t.Errorf("expected recipe overlay to render provenance details, got:\n%s", recipeView)
+	}
+}
+
+func TestTUIProviderAndScopeFiltering(t *testing.T) {
+	m := setupTestModel()
+	m.width = 140
+	m.height = 40
+	m.textInput.Blur()
+	m.unifiedApps = makeSampleUnifiedApps()
+
+	if got := len(m.filteredUnifiedApps()); got != 2 {
+		t.Fatalf("expected 2 unfiltered canonical apps, got %d", got)
+	}
+
+	// Cycle provider filter: all -> native
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = res.(Model)
+	if m.providerFilter != "native" {
+		t.Fatalf("expected providerFilter 'native', got %s", m.providerFilter)
+	}
+	if got := len(m.filteredUnifiedApps()); got != 1 {
+		t.Errorf("expected 1 app with native offer, got %d", got)
+	}
+
+	// Cycle provider filter to aur (all -> native -> aur)
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = res.(Model)
+	if m.providerFilter != "aur" {
+		t.Fatalf("expected providerFilter 'aur', got %s", m.providerFilter)
+	}
+	filtered := m.filteredUnifiedApps()
+	if len(filtered) != 1 || filtered[0].Name != "brave-bin" {
+		t.Errorf("expected brave-bin under AUR filter, got %+v", filtered)
+	}
+
+	// Cycle scope filter: all -> sandboxed
+	m.providerFilter = "all"
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = res.(Model)
+	if m.scopeFilter != "sandboxed" {
+		t.Fatalf("expected scopeFilter 'sandboxed', got %s", m.scopeFilter)
+	}
+	if got := len(m.filteredUnifiedApps()); got != 1 {
+		t.Errorf("expected 1 sandboxed app, got %d", got)
+	}
+}
+
+func TestTUIAllFiveTabsAndPolicyCycle(t *testing.T) {
+	m := setupTestModel()
+	m.width = 140
+	m.height = 40
+	m.textInput.Blur()
+
+	// Populate updates & installed entries
+	m.installedEntries = []InstalledEntry{{ID: "neovim", Name: "neovim", Version: "0.10.1", Provider: "pacman", Format: "Native Pacman"}}
+	m.installedLoaded = true
+	m.updateSummary = &updates.UpdateSummary{
+		TotalCount:    1,
+		ProviderCount: 1,
+		Updates: []updates.AvailableUpdate{
+			{PackageName: "firefox", Provider: "pacman", InstalledVersion: "124.0", AvailableVersion: "125.0", DownloadSize: "78 MB", IsSecurity: true},
+		},
+	}
+	m.updatesLoaded = true
+
+	// Tab 2: Installed & Health
+	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = res.(Model)
+	if !strings.Contains(m.View(), "INSTALLED APPLICATIONS & SYSTEM HEALTH") || !strings.Contains(m.View(), "neovim") {
+		t.Errorf("expected Tab 2 to render installed applications")
+	}
+
+	// Tab 3: Updates
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	m = res.(Model)
+	if !strings.Contains(m.View(), "UNIFIED UPDATE CENTER") || !strings.Contains(m.View(), "firefox") {
+		t.Errorf("expected Tab 3 to render update center")
+	}
+
+	// Tab 4: Pipeline
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	m = res.(Model)
+	if !strings.Contains(m.View(), "TRANSACTION JOURNAL") {
+		t.Errorf("expected Tab 4 to render transaction journal")
+	}
+
+	// Tab 5: Settings + cycle policy with 'c'
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	m = res.(Model)
+	if !strings.Contains(m.View(), "PROVIDER CAPABILITY MATRIX") {
+		t.Errorf("expected Tab 5 to render provider capability matrix")
+	}
+	beforePolicy := m.catalogMgr.GetPolicy()
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = res.(Model)
+	if m.catalogMgr.GetPolicy() == beforePolicy {
+		t.Errorf("expected 'c' in Settings tab to cycle recommendation policy")
+	}
+}
+
+func TestTUIDebounceSearchIgnoresStaleTokens(t *testing.T) {
+	m := setupTestModel()
+	m.textInput.Focus()
+	m.textInput.SetValue("zapfast")
+	m.searchSeq = 5
+
+	// Stale debounce seq=3 should be ignored
+	res, cmd := m.Update(searchDebounceMsg{seq: 3, query: "zap"})
+	m = res.(Model)
+	if m.loading || cmd != nil {
+		t.Errorf("expected stale debounce seq to be ignored")
+	}
+
+	// Current debounce seq=5 should trigger search
+	res, cmd = m.Update(searchDebounceMsg{seq: 5, query: "zapfast"})
+	m = res.(Model)
+	if !m.loading || cmd == nil {
+		t.Errorf("expected matching debounce seq to trigger background search")
+	}
+}
+
 
 
