@@ -170,3 +170,4 @@ func TestApp_OfferAuthorityAndCapabilities(t *testing.T) {
 		t.Errorf("Expected PolicySandboxPreferred to persist, got %s", app.GetRecommendationPolicy())
 	}
 }
+

@@ -119,10 +119,11 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({
               key={offer.id}
               onClick={() => onSelectOffer(offer.id)}
               type="button"
-              className={`p-3 rounded-lg text-left transition-all border flex flex-col justify-between gap-2 cursor-pointer ${isSelected
+              className={`p-3 rounded-lg text-left transition-all border flex flex-col justify-between gap-2 cursor-pointer ${
+                isSelected
                   ? 'bg-primary-container/20 border-primary shadow-sm ring-1 ring-primary'
                   : 'bg-surface-container-low hover:bg-surface-container-high border-white/5 text-on-surface-variant'
-                }`}
+              }`}
             >
               <div className="flex items-center justify-between gap-1 w-full">
                 <div className="flex items-center gap-2 min-w-0">
@@ -194,8 +195,8 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({
                 {selectedOffer.installScope === 'sandboxed'
                   ? '🛡️ Sandboxed Container'
                   : selectedOffer.installScope === 'user'
-                    ? '👤 User Build Scope'
-                    : '⚙️ Host System Integration'}
+                  ? '👤 User Build Scope'
+                  : '⚙️ Host System Integration'}
               </span>
             </div>
           </div>
@@ -289,12 +290,13 @@ export const SourcePicker: React.FC<SourcePickerProps> = ({
                 <button
                   onClick={() => onInstallOffer(selectedOffer)}
                   disabled={installing || !selectedOffer.isEligible}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition active:scale-95 cursor-pointer ${!selectedOffer.isEligible
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition active:scale-95 cursor-pointer ${
+                    !selectedOffer.isEligible
                       ? 'bg-surface-container-high text-on-surface-variant cursor-not-allowed opacity-60'
                       : installing
-                        ? 'bg-primary-container/80 text-on-primary-container opacity-85'
-                        : 'bg-primary-container hover:bg-primary-container/90 text-on-primary-container shadow-md'
-                    }`}
+                      ? 'bg-primary-container/80 text-on-primary-container opacity-85'
+                      : 'bg-primary-container hover:bg-primary-container/90 text-on-primary-container shadow-md'
+                  }`}
                   type="button"
                 >
                   {installing ? (

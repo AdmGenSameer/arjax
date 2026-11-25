@@ -64,21 +64,21 @@ type EnginePackageDTO struct {
 
 // InstalledPackageDTO represents an installed application on the system
 type InstalledPackageDTO struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	DisplayName   string `json:"displayName"`
-	Version       string `json:"version"`
-	Provider      string `json:"provider"`
-	Format        string `json:"format"`
-	Size          string `json:"size"`
-	SizeMB        int    `json:"sizeMB"`
-	HasUpdate     bool   `json:"hasUpdate"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DisplayName  string `json:"displayName"`
+	Version      string `json:"version"`
+	Provider     string `json:"provider"`
+	Format       string `json:"format"`
+	Size         string `json:"size"`
+	SizeMB       int    `json:"sizeMB"`
+	HasUpdate    bool   `json:"hasUpdate"`
 	UpdateVersion string `json:"updateVersion,omitempty"`
-	Category      string `json:"category"`
-	Icon          string `json:"icon"`
-	LastActivity  string `json:"lastActivity"`
-	IsNative      bool   `json:"isNative"`
-	IsSharedCore  bool   `json:"isSharedCore"`
+	Category     string `json:"category"`
+	Icon         string `json:"icon"`
+	LastActivity string `json:"lastActivity"`
+	IsNative     bool   `json:"isNative"`
+	IsSharedCore bool   `json:"isSharedCore"`
 }
 
 // UpdateItemDTO represents a pending package update
