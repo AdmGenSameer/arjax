@@ -366,70 +366,349 @@ def github_fallback(query: str, unavailable_sources: Optional[List[str]] = None)
             border_style="red"
         ))
 
-def handle_upgrade_command() -> None:
-    """Handle the upgrade command to update arjax from GitHub."""
-    logger.info("Starting arjax upgrade process")
-    
+def _find_provider_binary() -> Optional[Path]:
+    """Locate the compiled arjax-provider Go engine binary."""
+    candidates: List[Path] = []
+    which_bin = shutil.which("arjax-provider")
+    if which_bin:
+        candidates.append(Path(which_bin))
+    candidates.extend([
+        Path.home() / ".local" / "bin" / "arjax-provider",
+        Path("/usr/local/bin/arjax-provider"),
+        Path(__file__).resolve().parents[2] / "arjax-provider-engine" / "bin" / "arjax-provider",
+    ])
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def handle_system_upgrade(packages: Optional[List[str]] = None, check_only: bool = False) -> None:
+    """Safely upgrade host OS packages across configured providers."""
+    import distro
+    detected_distro = distro.id().lower()
+    distro_family = DISTRO_MAP.get(detected_distro, detected_distro)
+    config = get_user_config()
+
+    from arjax.provider_engine import GoProviderEngine
+    engine = GoProviderEngine()
+
+    if check_only:
+        console.print("[blue]🔍 Checking for pending system package updates...[/blue]")
+        if engine.is_available():
+            res = engine.update()
+            if isinstance(res, dict) and res.get("status") == "success":
+                total = res.get("total_updates", 0)
+                by_prov = res.get("by_provider", {})
+                prov_str = ", ".join(f"{p}: {c}" for p, c in by_prov.items()) if by_prov else "none"
+                if total > 0:
+                    console.print(f"[green]✔ Found {total} available update(s) ({prov_str}).[/green]")
+                    console.print("Run [cyan]arjax upgrade --system[/cyan] to apply them safely.")
+                else:
+                    console.print("[green]✔ All tracked system packages are up to date.[/green]")
+                return
+        # Fallback to python update check
+        res = trigger_update_check()
+        if res.get("status") == "success":
+            updates_found = res.get("updates_found", 0)
+            if updates_found > 0:
+                console.print(f"[green]✔ Found {updates_found} available update(s).[/green]")
+                console.print("Run [cyan]arjax upgrade --system[/cyan] to apply them.")
+            else:
+                console.print("[green]✔ All packages are up to date.[/green]")
+        return
+
+    # Arch Linux safety validations
+    if distro_family == "arch":
+        if config.proactive_system_advice:
+            console.print("[bold cyan]Arch Linux Guard:[/bold cyan] Enforcing official pacman-before-AUR sequencing with no partial upgrades.")
+        if config.auto_handle_arch_news:
+            news = get_arch_news()
+            if news.get("available") and news.get("has_news"):
+                console.print("[yellow]Unread Arch news detected. Reviewing before system upgrade...[/yellow]")
+                if news.get("output"):
+                    console.print(news["output"])
+
     console.print(Panel(
-        "[bold cyan]🔄 Upgrading arjax from GitHub...[/bold cyan]\n\n"
-        "[dim]This will pull the latest code and reinstall arjax.[/dim]",
-        title="Arjax Upgrade",
+        "[bold cyan]⚡ Executing System Package Upgrade...[/bold cyan]\n"
+        "[dim]Orchestrating native repos, AUR, and sandboxed runtimes (Flatpak/Snap)[/dim]",
+        title="System Upgrade",
         border_style="cyan"
     ))
-    
-    console.print("[blue]📥 Pulling latest changes from repository...[/blue]")
-    # Upgrade the active environment instead of a separate pipx install.
-    upgrade_cmd = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-        "--force-reinstall",
-        "git+https://github.com/AdmGenSameer/archpkg-helper.git",
-    ]
-    logger.info(f"Executing upgrade command: {' '.join(upgrade_cmd)}")
-    
-    try:
-        console.print("[blue]📦 Reinstalling with latest code...[/blue]\n")
-        result = subprocess.run(upgrade_cmd, check=False)
-        exit_code = result.returncode
-        
-        if exit_code != 0:
-            logger.error(f"Upgrade failed with exit code: {exit_code}")
-            console.print(Panel(
-                f"[red]❌ Upgrade failed with exit code {exit_code}.[/red]\n\n"
-                "[bold cyan]Troubleshooting:[/bold cyan]\n"
-                "- Check your internet connection\n"
-                "- Ensure you can access GitHub (https://github.com)\n"
-                "- Try again in a few moments\n"
-                "- Confirm this command is running from the installed ArchPkg environment\n\n"
-                "[bold yellow]Manual upgrade:[/bold yellow]\n"
-                f"Run: [cyan]{' '.join(upgrade_cmd)}[/cyan]",
-                title="Upgrade Failed",
-                border_style="red"
-            ))
+
+    # Prefer Go Provider Engine's full multi-provider safe upgrade pipeline
+    if engine.is_available():
+        console.print("[blue]Running coordinated multi-provider upgrade via engine...[/blue]")
+        res = engine.upgrade(packages)
+        if isinstance(res, dict) and (res.get("status") in ("success", "completed") or res.get("success")):
+            console.print("[bold green]✅ System packages successfully upgraded![/bold green]")
+            return
+        elif isinstance(res, dict) and res.get("message"):
+            console.print(f"[green]{res.get('message')}[/green]")
+            return
+
+    # Fallback to paru / native package manager
+    if distro_family == "arch":
+        if shutil.which("paru"):
+            console.print("[blue]Invoking paru for full system upgrade (paru -Syu)...[/blue]")
+            res = subprocess.run(["paru", "-Syu"], check=False)
+            if res.returncode == 0:
+                console.print("[bold green]✅ System upgrade completed successfully.[/bold green]")
+                return
+        elif shutil.which("pacman"):
+            console.print("[blue]Invoking pacman for full system upgrade (sudo pacman -Syu)...[/blue]")
+            res = subprocess.run(["sudo", "pacman", "-Syu"], check=False)
+            if res.returncode == 0:
+                console.print("[bold green]✅ System upgrade completed successfully.[/bold green]")
+                return
+
+    # Generic distro fallback
+    res = install_updates(packages)
+    if res.get("status") == "success":
+        console.print(f"[bold green]✅ System update finished ({res.get('installed', 0)} installed, {res.get('failed', 0)} failed).[/bold green]")
+    else:
+        console.print(f"[red]Update failed: {res.get('message', 'Unknown error')}[/red]")
+
+
+def handle_arjax_self_upgrade(check_only: bool = False, force: bool = False, with_gui: bool = False) -> None:
+    """Upgrade Arjax universal suite (Python CLI, Go Provider Engine, Native GUI)."""
+    logger.info("Starting Arjax universal self-upgrade")
+    repo_root = Path(__file__).resolve().parents[2]
+    is_git_checkout = (repo_root / ".git").is_dir()
+    venv_dir = Path.home() / ".local" / "share" / "arjax" / "venv"
+    venv_python = venv_dir / "bin" / "python"
+    venv_pip = venv_dir / "bin" / "pip"
+    bin_dir = Path.home() / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Check current status & check-only mode
+    if check_only:
+        console.print("[blue]🔍 Checking for Arjax suite updates...[/blue]")
+        if is_git_checkout:
+            try:
+                fetch_res = subprocess.run(["git", "fetch", "--dry-run"], cwd=str(repo_root), capture_output=True, text=True, timeout=10)
+                status_res = subprocess.run(["git", "status", "-uno"], cwd=str(repo_root), capture_output=True, text=True, timeout=10)
+                if "Your branch is behind" in status_res.stdout or fetch_res.stdout.strip():
+                    console.print("[yellow]Update available![/yellow] New commits found on remote branch.")
+                    console.print("Run [cyan]arjax upgrade[/cyan] to upgrade Arjax.")
+                else:
+                    console.print("[green]✔ Arjax suite is up to date (current commit is latest).[/green]")
+            except Exception as e:
+                console.print(f"[yellow]Could not check remote git updates: {e}[/yellow]")
         else:
-            logger.info("Successfully upgraded arjax")
-            console.print(Panel(
-                "[bold green]✅ Successfully upgraded arjax! You now have the latest features![/bold green]\n\n"
-                "[bold cyan]💡 Tip:[/bold cyan] Run [cyan]arjax --help[/cyan] to see what's new!",
-                title="Upgrade Complete",
-                border_style="green"
-            ))
-    except Exception as e:
-        PackageHelperLogger.log_exception(logger, "Unexpected error during upgrade", e)
-        console.print(Panel(
-            f"[red]❌ An unexpected error occurred during upgrade.[/red]\n\n"
-            f"[bold]Error details:[/bold] {str(e)}\n\n"
-            "[bold cyan]What to do:[/bold cyan]\n"
-            "- Check your internet connection\n"
-            "- Make sure the current Python environment can access pip and GitHub\n"
-            f"- Try running manually: [cyan]{' '.join(upgrade_cmd)}[/cyan]\n"
-            "- Report this issue if it persists",
-            title="Upgrade Error",
-            border_style="red"
-        ))
+            console.print("[cyan]Installed in standalone environment.[/cyan] Run [cyan]arjax upgrade[/cyan] to pull latest release.")
+        return
+
+    console.print(Panel(
+        "[bold cyan]🔄 Upgrading Arjax Universal Suite...[/bold cyan]\n\n"
+        "[dim]Components: Python Core CLI • Go Provider Engine • Native Wails GUI[/dim]",
+        title="Arjax Self-Upgrade",
+        border_style="cyan"
+    ))
+
+    # 2. Upgrade Python Core
+    console.print("\n[bold blue]1/3 Upgrading Python Core CLI...[/bold blue]")
+    pip_bin = None
+    if venv_pip.is_file() and os.access(venv_pip, os.X_OK):
+        pip_bin = [str(venv_pip)]
+    elif sys.prefix != sys.base_prefix:
+        pip_bin = [sys.executable, "-m", "pip"]
+    else:
+        pip_bin = [sys.executable, "-m", "pip"]
+
+    pip_cmd = list(pip_bin) + ["install", "--upgrade"]
+    # Handle PEP 668 if running against system Python outside venv
+    if sys.prefix == sys.base_prefix and not venv_pip.is_file():
+        pip_cmd.append("--break-system-packages")
+
+    python_ok = False
+    if is_git_checkout:
+        console.print(f"[dim]Upgrading from local git checkout: {repo_root}[/dim]")
+        # Check if working copy is clean before attempting git pull
+        dirty = False
+        try:
+            st = subprocess.run(["git", "status", "--porcelain"], cwd=str(repo_root), capture_output=True, text=True)
+            dirty = bool(st.stdout.strip())
+        except Exception:
+            pass
+
+        if not dirty:
+            try:
+                subprocess.run(["git", "pull", "--ff-only"], cwd=str(repo_root), check=False, capture_output=True)
+            except Exception:
+                pass
+
+        cmd = list(pip_cmd) + ["--no-deps", "-e", str(repo_root)]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            # Fallback without -e
+            cmd = list(pip_cmd) + [str(repo_root)]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+        python_ok = (res.returncode == 0)
+    else:
+        console.print("[dim]Fetching latest code from GitHub...[/dim]")
+        cmd = list(pip_cmd) + ["--force-reinstall", "git+https://github.com/AdmGenSameer/archpkg-helper.git"]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        python_ok = (res.returncode == 0)
+
+    if python_ok:
+        console.print("[green]✔ Python core CLI successfully updated.[/green]")
+    else:
+        console.print(f"[yellow]Python core upgrade notice: {res.stderr.strip() or 'check permissions'}[/yellow]")
+
+    # 3. Compile and Replace Go Provider Engine (arjax-provider)
+    console.print("\n[bold blue]2/3 Upgrading Go Provider Engine (arjax-provider)...[/bold blue]")
+    go_bin = shutil.which("go")
+    provider_ok = False
+    provider_target = bin_dir / "arjax-provider"
+
+    engine_src = None
+    if is_git_checkout and (repo_root / "arjax-provider-engine").is_dir():
+        engine_src = repo_root / "arjax-provider-engine"
+    elif (Path.home() / ".local" / "share" / "arjax" / "source" / "arjax-provider-engine").is_dir():
+        engine_src = Path.home() / ".local" / "share" / "arjax" / "source" / "arjax-provider-engine"
+
+    if go_bin and engine_src:
+        temp_bin = engine_src / "bin" / "arjax-provider.upgrade_tmp"
+        temp_bin.parent.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env["GOTOOLCHAIN"] = "auto"
+        build_res = subprocess.run(
+            [go_bin, "build", "-v", "-o", str(temp_bin), "."],
+            cwd=str(engine_src),
+            env=env,
+            capture_output=True,
+            text=True
+        )
+        if build_res.returncode == 0 and temp_bin.is_file():
+            # Use install command or atomic rename to avoid Text file busy
+            inst = subprocess.run(["install", "-m", "755", str(temp_bin), str(provider_target)], capture_output=True)
+            if inst.returncode == 0:
+                provider_ok = True
+                console.print(f"[green]✔ Go Provider Engine rebuilt and atomically installed to {provider_target}[/green]")
+            else:
+                try:
+                    shutil.move(str(temp_bin), str(provider_target))
+                    os.chmod(str(provider_target), 0o755)
+                    provider_ok = True
+                    console.print(f"[green]✔ Go Provider Engine installed to {provider_target}[/green]")
+                except Exception as e:
+                    console.print(f"[red]Failed to replace provider engine: {e}[/red]")
+            temp_bin.unlink(missing_ok=True)
+        else:
+            console.print(f"[yellow]Engine compilation notice: {build_res.stderr.strip()}[/yellow]")
+    else:
+        if not go_bin:
+            console.print("[dim]Go compiler not detected; preserving existing compiled provider engine binary.[/dim]")
+        if provider_target.is_file() and os.access(provider_target, os.X_OK):
+            provider_ok = True
+
+    # 4. Compile and Replace Native Wails GUI (arjax-gui) if installed or requested
+    console.print("\n[bold blue]3/3 Checking Native Desktop GUI (Wails)...[/bold blue]")
+    gui_target = bin_dir / "arjax-gui"
+    gui_installed = gui_target.is_file() and os.access(gui_target, os.X_OK)
+    gui_ok = gui_installed
+
+    gui_src = None
+    if is_git_checkout and (repo_root / "arjax-gui").is_dir():
+        gui_src = repo_root / "arjax-gui"
+
+    if (with_gui or gui_installed) and go_bin and gui_src:
+        temp_gui = gui_src / "arjax-gui.upgrade_tmp"
+        env = os.environ.copy()
+        env["GOTOOLCHAIN"] = "auto"
+        gui_res = subprocess.run(
+            [go_bin, "build", "-tags=desktop,production", "-v", "-o", str(temp_gui), "."],
+            cwd=str(gui_src),
+            env=env,
+            capture_output=True,
+            text=True
+        )
+        if gui_res.returncode == 0 and temp_gui.is_file():
+            subprocess.run(["install", "-m", "755", str(temp_gui), str(gui_target)], capture_output=True)
+            temp_gui.unlink(missing_ok=True)
+            gui_ok = True
+            console.print(f"[green]✔ Wails GUI rebuilt and installed to {gui_target}[/green]")
+        else:
+            console.print(f"[dim]GUI build skipped or encountered: {gui_res.stderr.strip()}[/dim]")
+    elif not gui_installed and not with_gui:
+        console.print("[dim]GUI is optional and not currently installed (use --with-gui to build).[/dim]")
+
+    # 5. Shell wrapper check
+    launcher = bin_dir / "arjax"
+    if not launcher.is_file() or not os.access(launcher, os.X_OK):
+        target_py = str(venv_python if venv_python.is_file() else sys.executable)
+        launcher.write_text(f"""#!/bin/sh
+exec "{target_py}" -m arjax.interfaces.cli "$@"
+""")
+        launcher.chmod(0o755)
+
+    # 6. Post-Upgrade Verification
+    console.print("\n[bold blue]Verifying installation health...[/bold blue]")
+    cli_health = False
+    try:
+        ver_check = subprocess.run([str(launcher), "--help"], capture_output=True, timeout=5)
+        cli_health = (ver_check.returncode == 0)
+    except Exception:
+        pass
+
+    engine_health = False
+    try:
+        eng_check = subprocess.run([str(provider_target), "capabilities", "--json"], capture_output=True, timeout=5)
+        engine_health = (eng_check.returncode == 0)
+    except Exception:
+        pass
+
+    table = Table(title="Arjax Component Status", border_style="cyan")
+    table.add_column("Component", style="bold")
+    table.add_column("Location", style="dim")
+    table.add_column("Status", style="green")
+    table.add_column("Health", style="bold")
+
+    table.add_row(
+        "Python CLI Core",
+        str(launcher),
+        "Upgraded" if python_ok else "Retained",
+        "[green]Healthy[/green]" if cli_health else "[red]Check Required[/red]"
+    )
+    table.add_row(
+        "Go Provider Engine",
+        str(provider_target),
+        "Upgraded" if provider_ok else "Retained",
+        "[green]Healthy[/green]" if engine_health else "[yellow]Warning[/yellow]"
+    )
+    if gui_installed or with_gui:
+        table.add_row(
+            "Wails Native GUI",
+            str(gui_target),
+            "Upgraded" if gui_ok else "Retained",
+            "[green]Ready[/green]" if gui_target.is_file() else "[dim]Not Built[/dim]"
+        )
+
+    console.print(table)
+    console.print(Panel(
+        "[bold green]✨ Arjax universal upgrade completed successfully![/bold green]\n\n"
+        "• Launch TUI:             [cyan]arjax[/cyan]\n"
+        "• Upgrade host packages:  [cyan]arjax upgrade --system[/cyan]\n"
+        "• Check what's new:       [cyan]arjax --help[/cyan]",
+        border_style="green"
+    ))
+
+
+def handle_upgrade_command(
+    system: bool = False,
+    check_only: bool = False,
+    force: bool = False,
+    with_gui: bool = False,
+    packages: Optional[List[str]] = None,
+) -> None:
+    """Handle upgrading the Arjax suite or host system packages."""
+    if system:
+        handle_system_upgrade(packages=packages, check_only=check_only)
+        return
+
+    handle_arjax_self_upgrade(check_only=check_only, force=force, with_gui=with_gui)
+
 
 def _find_wails_gui_binary() -> Optional[Path]:
     """Locate the compiled native Wails desktop GUI binary (arjax-gui)."""
@@ -1548,16 +1827,27 @@ def suggest(
 
 @app.command()
 def upgrade(
+    system: bool = Option(False, "--system", "-s", help="Upgrade host system packages (Pacman, AUR, Flatpak, Snap, APT, etc.) instead of Arjax itself"),
+    check_only: bool = Option(False, "--check", "-c", help="Only check for available updates without applying them"),
+    force: bool = Option(False, "--force", "-f", help="Force rebuild and reinstall even if already up to date"),
+    with_gui: bool = Option(False, "--with-gui", help="Also build and update the Wails desktop GUI (arjax-gui)"),
+    packages: Optional[List[str]] = Argument(None, help="Optional specific system package(s) to upgrade when using --system"),
     debug: bool = Option(False, "--debug", help="Enable debug logging")
 ) -> None:
     """
-    Upgrade arjax tool itself from GitHub.
+    Upgrade Arjax tool suite itself (default) or host system packages (--system).
     """
     if debug:
         PackageHelperLogger.set_debug_mode(True)
     
-    logger.info("Starting arjax upgrade from GitHub")
-    handle_upgrade_command()
+    logger.info("Starting arjax upgrade command")
+    handle_upgrade_command(
+        system=system,
+        check_only=check_only,
+        force=force,
+        with_gui=with_gui,
+        packages=packages,
+    )
 
 
 @app.command()

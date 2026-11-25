@@ -91,3 +91,15 @@ class GoProviderEngine:
 
     def batch_install(self, package_names: List[str]) -> Dict[str, Any]:
         return self._run(["batch-install"] + package_names)
+
+    def update(self) -> Dict[str, Any]:
+        """Check for updates across all supported providers."""
+        return self._run(["update"])
+
+    def upgrade(self, package_names: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Apply updates safely across all supported providers."""
+        args = ["upgrade"]
+        if package_names:
+            args.extend(package_names)
+        return self._run(args)
+

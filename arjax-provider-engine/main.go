@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/appstream"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog"
@@ -104,6 +105,57 @@ func main() {
 		}
 		outputResponse(info, *jsonOutput)
 
+	case "update":
+		summary := cm.Updates().CheckAllUpdates(ctx)
+		outputResponse(map[string]interface{}{
+			"command":         "update",
+			"status":          "success",
+			"total_updates":   summary.TotalCount,
+			"security_count":  summary.SecurityCount,
+			"provider_count":  summary.ProviderCount,
+			"by_provider":     summary.ByProvider,
+			"updates":         summary.Updates,
+			"provider_errors": summary.ProviderErrors,
+			"notes":           summary.Notes,
+		}, *jsonOutput)
+
+	case "upgrade":
+		summary := cm.Updates().CheckAllUpdates(ctx)
+		if summary.TotalCount == 0 {
+			outputResponse(map[string]interface{}{
+				"command": "upgrade",
+				"status":  "success",
+				"message": "All tracked packages across active providers are already up to date.",
+				"updated": 0,
+			}, *jsonOutput)
+			break
+		}
+		var targetIDs []string
+		if len(args) > 0 {
+			wanted := make(map[string]bool)
+			for _, a := range args {
+				wanted[strings.ToLower(a)] = true
+			}
+			for _, u := range summary.Updates {
+				if wanted[strings.ToLower(u.PackageName)] {
+					targetIDs = append(targetIDs, u.OfferID)
+				}
+			}
+			if len(targetIDs) == 0 {
+				exitWithError(fmt.Sprintf("No pending updates found for package(s): %s", strings.Join(args, ", ")), *jsonOutput)
+			}
+		} else {
+			for _, u := range summary.Updates {
+				targetIDs = append(targetIDs, u.OfferID)
+			}
+		}
+		batchResult := cm.Updates().UpdateSelected(ctx, targetIDs, nil)
+		outputResponse(map[string]interface{}{
+			"command": "upgrade",
+			"status":  "completed",
+			"results": batchResult,
+		}, *jsonOutput)
+
 	case "tui":
 		if err := tui.RunTUIWithCatalog(pm, cm); err != nil {
 			exitWithError(err.Error(), false)
@@ -140,7 +192,10 @@ func printUsage() {
 	fmt.Println("  install <package>       Install a package")
 	fmt.Println("  remove <package>        Remove a package")
 	fmt.Println("  info <package>          Get package details")
+	fmt.Println("  update                  Check for pending package updates across all providers")
+	fmt.Println("  upgrade [p1..pn]        Apply pending updates safely (all if not specified)")
 	fmt.Println("  batch-install <p1..pn>  Install multiple packages concurrently")
+	fmt.Println("  tui                     Launch interactive Tokyo Midnight Bubble Tea TUI")
 }
 
 func outputResponse(data interface{}, isJSON bool) {

@@ -316,3 +316,69 @@ func (pm *ProviderManager) BatchInstall(ctx context.Context, pkgs []models.Packa
 	wg.Wait()
 	return results, nil
 }
+
+// Update performs an orchestrated system update across supported providers in safe order:
+// native repository -> AUR -> sandboxed (Flatpak, Snap)
+func (pm *ProviderManager) Update(ctx context.Context) (models.Result, error) {
+	start := time.Now()
+	var errs []string
+	successCount := 0
+
+	// Preferred safe execution order: host repos first, then AUR, then sandboxed runtimes
+	order := []string{"repository", "pacman", "aur", "flatpak", "snap", "apt", "dnf", "zypper"}
+	executed := make(map[string]bool)
+
+	for _, name := range order {
+		for _, p := range pm.providers {
+			if strings.EqualFold(p.Name(), name) && !executed[p.Name()] {
+				executed[p.Name()] = true
+				res, err := p.Update(ctx)
+				if err != nil || !res.Success {
+					if err != nil {
+						errs = append(errs, fmt.Sprintf("%s: %v", p.Name(), err))
+					} else if res.Error != "" {
+						errs = append(errs, fmt.Sprintf("%s: %s", p.Name(), res.Error))
+					}
+				} else {
+					successCount++
+				}
+			}
+		}
+	}
+
+	// Any remaining supported providers not in the explicit list (e.g. custom or vendor)
+	for _, p := range pm.providers {
+		if !executed[p.Name()] {
+			executed[p.Name()] = true
+			res, err := p.Update(ctx)
+			if err != nil || !res.Success {
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("%s: %v", p.Name(), err))
+				} else if res.Error != "" {
+					errs = append(errs, fmt.Sprintf("%s: %s", p.Name(), res.Error))
+				}
+			} else {
+				successCount++
+			}
+		}
+	}
+
+	overallSuccess := len(errs) == 0 && successCount > 0
+	errMsg := strings.Join(errs, "; ")
+	var returnErr error
+	if len(errs) > 0 {
+		returnErr = fmt.Errorf("update completed with errors: %s", errMsg)
+	}
+
+	return models.Result{
+		Command:    "upgrade",
+		Package:    "system",
+		Provider:   "all",
+		Success:    overallSuccess,
+		StartTime:  start,
+		EndTime:    time.Now(),
+		DurationMs: time.Since(start).Milliseconds(),
+		Error:      errMsg,
+	}, returnErr
+}
+

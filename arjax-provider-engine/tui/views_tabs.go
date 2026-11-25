@@ -82,7 +82,7 @@ func (m Model) renderUpdatesCenterView(w, paneBoxHeight int) string {
 
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("┌─ (3) UNIFIED UPDATE CENTER ─┐") + "\n")
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorMuted).Render("  Shortcuts: [j/k] Navigate • [u] Check All Updates • [i] Apply Selected / Full Upgrade") + "\n\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorMuted).Render("  Shortcuts: [j/k] Navigate • [u] Rescan Updates • [i] Upgrade Selected • [U] Upgrade All") + "\n\n")
 
 	if m.checkingUpdates {
 		b.WriteString("  " + m.spinner.View() + " Checking updates across Pacman, AUR, Flatpak, Snap...\n")

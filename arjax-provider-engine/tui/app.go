@@ -476,7 +476,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.startTransactionState("install", pkg)
 					m.activeTab = 0
-					return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runInstall(pkg))
+					return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runApplyUpdates([]string{upd.OfferID}))
+				}
+
+			case "U", "A":
+				if m.activeTab == 2 && m.updateSummary != nil && len(m.updateSummary.Updates) > 0 {
+					var allIDs []string
+					for _, u := range m.updateSummary.Updates {
+						allIDs = append(allIDs, u.OfferID)
+					}
+					pkg := models.Package{
+						Name:     fmt.Sprintf("Full System Upgrade (%d updates)", len(allIDs)),
+						Version:  "Latest",
+						Provider: "all",
+					}
+					m.startTransactionState("install", pkg)
+					m.activeTab = 0
+					return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runApplyUpdates(allIDs))
 				}
 
 			case "r":
@@ -880,6 +896,40 @@ func (m Model) runRemoveOffer(offer catalog.PackageOffer, pkg models.Package) te
 
 func (m Model) runInstall(pkg models.Package) tea.Cmd {
 	return m.runInstallOffer(catalog.PackageOffer{}, pkg)
+}
+
+func (m Model) runApplyUpdates(offerIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
+		defer cancel()
+
+		start := time.Now()
+		if m.catalogMgr != nil {
+			batchRes := m.catalogMgr.Updates().UpdateSelected(ctx, offerIDs, nil)
+			success := batchRes.Failed == 0
+			errMsg := ""
+			if !success {
+				errMsg = batchRes.Note
+			}
+			return actionDoneMsg{
+				action: "install",
+				result: models.Result{
+					Command:    "upgrade",
+					Package:    fmt.Sprintf("system-upgrade (%d packages)", batchRes.Succeeded),
+					Provider:   "system",
+					Success:    success,
+					StartTime:  start,
+					EndTime:    time.Now(),
+					DurationMs: time.Since(start).Milliseconds(),
+					Error:      errMsg,
+				},
+				err: nil,
+			}
+		}
+
+		res, err := m.pm.Update(ctx)
+		return actionDoneMsg{action: "install", result: res, err: err}
+	}
 }
 
 func (m Model) runRemove(pkg models.Package) tea.Cmd {

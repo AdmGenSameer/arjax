@@ -20,6 +20,7 @@ PURGE_CONFIG=false
 INSTALL_DEPS=false
 YES_TO_ALL=false
 WITH_GUI=false
+UPGRADE_MODE=false
 LOG_FILE="${TMPDIR:-/tmp}/arjax-install-${UID:-$(id -u 2>/dev/null || echo 0)}.log"
 touch "$LOG_FILE" 2>/dev/null || LOG_FILE="$(mktemp /tmp/arjax-install-XXXXXX.log 2>/dev/null || echo "/tmp/arjax-install.log")"
 INSTALL_SUCCESS=false
@@ -31,6 +32,9 @@ for arg in "$@"; do
     case "$arg" in
         --uninstall|uninstall)
             UNINSTALL_MODE=true
+            ;;
+        --upgrade|upgrade)
+            UPGRADE_MODE=true
             ;;
         --purge)
             PURGE_CONFIG=true
@@ -810,11 +814,14 @@ build_go_engine() {
     fi
 
     mkdir -p "$BIN_DIR"
-    rm -f "$BIN_DIR/arjax-provider"
+    local temp_bin="$BIN_DIR/arjax-provider.tmp"
 
     run_with_progress "Compiling Arjax Go Provider Engine" "go" \
-        "cd \"$engine_dir\" && GOTOOLCHAIN=auto go build -v -o \"$BIN_DIR/arjax-provider\" ." \
+        "cd \"$engine_dir\" && GOTOOLCHAIN=auto go build -v -o \"$temp_bin\" ." \
         || die "Failed to compile compulsory Arjax Go Provider Engine."
+
+    install -m 755 "$temp_bin" "$BIN_DIR/arjax-provider" 2>/dev/null || mv -f "$temp_bin" "$BIN_DIR/arjax-provider"
+    rm -f "$temp_bin"
 
     if [ ! -x "$BIN_DIR/arjax-provider" ]; then
         die "Compiled binary missing at $BIN_DIR/arjax-provider."
@@ -864,12 +871,16 @@ build_wails_gui() {
     fi
 
     mkdir -p "$BIN_DIR"
+    local temp_gui="$BIN_DIR/arjax-gui.tmp"
     if run_with_progress "Compiling Native Wails GUI (arjax-gui)" "go" \
-        "cd \"$gui_dir\" && GOTOOLCHAIN=auto go build $build_tags -v -o \"$BIN_DIR/arjax-gui\" ."; then
+        "cd \"$gui_dir\" && GOTOOLCHAIN=auto go build $build_tags -v -o \"$temp_gui\" ."; then
+        install -m 755 "$temp_gui" "$BIN_DIR/arjax-gui" 2>/dev/null || mv -f "$temp_gui" "$BIN_DIR/arjax-gui"
+        rm -f "$temp_gui"
         if [ -x "$BIN_DIR/arjax-gui" ]; then
             log "Native Wails GUI compiled and installed to $BIN_DIR/arjax-gui"
         fi
     else
+        rm -f "$temp_gui"
         log "Notice: Native Wails GUI build did not complete cleanly (CLI and Go TUI remain ready). See $LOG_FILE for details."
     fi
 }
@@ -1094,6 +1105,12 @@ configure_arch_profile() {
         return
     fi
 
+    # During upgrade or if config already exists, preserve existing user settings
+    if [ -f "$HOME/.arjax/config.json" ]; then
+        log "Existing Arjax configuration found at $HOME/.arjax/config.json; preserving user settings."
+        return 0
+    fi
+
     echo ""
     log "Choose your Arjax profile:"
     echo "    1) normal (recommended) - Arjax handles updates/news/trust checks automatically"
@@ -1161,7 +1178,11 @@ main() {
         return 0
     fi
 
-    log "Starting universal installation of Arjax..."
+    if [ "$UPGRADE_MODE" = true ]; then
+        log "Starting upgrade of Arjax suite..."
+    else
+        log "Starting universal installation of Arjax..."
+    fi
 
     ensure_python
     ensure_git
@@ -1178,8 +1199,13 @@ main() {
     configure_arch_profile "$(detect_distro_family)"
 
     INSTALL_SUCCESS=true
-    log "Arjax installation complete!"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Arjax installation completed successfully." >> "$LOG_FILE" 2>/dev/null || true
+    if [ "$UPGRADE_MODE" = true ]; then
+        log "Arjax suite upgrade complete!"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Arjax suite upgrade completed successfully." >> "$LOG_FILE" 2>/dev/null || true
+    else
+        log "Arjax installation complete!"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Arjax installation completed successfully." >> "$LOG_FILE" 2>/dev/null || true
+    fi
     echo ""
     echo "Quick start:"
     echo "    arjax               # Launch interactive TUI (Default)"
