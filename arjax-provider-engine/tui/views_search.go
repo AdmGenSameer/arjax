@@ -176,8 +176,8 @@ func (m Model) renderCanonicalListPane(outerW, boxH int) string {
 		headerLine = clampStyledWidth(headerLeft, innerW)
 	}
 
-	// Each card takes 4 content lines + 1 spacer = 5 lines. Footer takes 1 line.
-	const cardLines = 5
+	// Each card takes 3 content lines + 1 spacer = 4 lines. Footer takes 1 line.
+	const cardLines = 4
 	availRows := boxH - 3
 	if availRows < cardLines {
 		availRows = cardLines
@@ -243,12 +243,12 @@ func (m Model) renderCanonicalListPane(outerW, boxH int) string {
 
 func (m Model) renderCanonicalCard(app catalog.UnifiedApplication, idx int, selected bool, innerW int) string {
 	offer := m.activeOfferForApp(app)
-	cardInnerW := innerW - 3
+	cardInnerW := innerW - 4
 	if cardInnerW < 20 {
 		cardInnerW = 20
 	}
 
-	// Row 1: Cursor + Index + Name + Checkmark + Version + Badge
+	// Row 1: Prefix + Name + Version + Installed Marker + Badge
 	prefix := fmt.Sprintf("  %d. ", idx)
 	nameStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorTextBright)
 	if selected {
@@ -263,22 +263,19 @@ func (m Model) renderCanonicalCard(app catalog.UnifiedApplication, idx int, sele
 
 	verStr := ""
 	if offer.Version != "" {
-		verStr = lipgloss.NewStyle().Foreground(ColorMuted).Render(" (" + truncateText(offer.Version, 16) + ")")
+		verStr = lipgloss.NewStyle().Foreground(ColorMuted).Render(" (" + truncateText(offer.Version, 14) + ")")
 	}
 
-	badgeText := strings.ToUpper(offer.Provider)
-	if offer.RecommendationBadge == "Recommended" && offer.Score >= 85 {
-		badgeText = strings.ToUpper(offer.Provider) + " ★ REC"
-	}
 	badge := ProviderBadge(offer.Provider)
 	if offer.RecommendationBadge == "Recommended" && selected {
-		badge = RecommendBadgeStyle.Render(badgeText)
+		badge = RecommendBadgeStyle.Render(strings.ToUpper(offer.Provider) + " ★")
 	}
 
-	nameMax := cardInnerW - lipgloss.Width(badge) - 18
-	if nameMax < 8 {
-		nameMax = 8
+	nameMax := cardInnerW - lipgloss.Width(badge) - lipgloss.Width(prefix) - lipgloss.Width(verStr) - lipgloss.Width(installedMark) - 2
+	if nameMax < 6 {
+		nameMax = 6
 	}
+
 	leftTitle := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(selected).Render(prefix) +
 		nameStyle.Render(truncateText(app.Name, nameMax)) +
 		installedMark + verStr
@@ -289,61 +286,75 @@ func (m Model) renderCanonicalCard(app catalog.UnifiedApplication, idx int, sele
 	}
 	row1 := leftTitle + strings.Repeat(" ", gap1) + badge
 
-	// Row 2: Summary
+	// Row 2: Description
 	summary := app.Summary
 	if summary == "" {
 		summary = app.Description
 	}
+	summary = strings.ReplaceAll(summary, "\n", " ")
+	summary = strings.TrimSpace(summary)
 	if summary == "" {
 		summary = "Linux software package"
 	}
-	row2 := "   " + lipgloss.NewStyle().Foreground(ColorText).Render(truncateText(summary, cardInnerW-3))
-
-	// Row 3: Offers Chips
-	var chipParts []string
-	chipParts = append(chipParts, lipgloss.NewStyle().Foreground(ColorMuted).Render("   Offers: "))
-	usedW := 11
-	for _, o := range app.Offers {
-		lbl := strings.Title(o.Provider)
-		if o.Repository != "" && o.Provider == "pacman" {
-			lbl = "Pacman " + strings.Title(o.Repository)
-		}
-		var chip string
-		if o.ID == offer.ID {
-			chip = OfferChipActiveStyle.Render(lbl)
-		} else {
-			chip = OfferChipStyle.Render(lbl)
-		}
-		cw := lipgloss.Width(chip) + 1
-		if usedW+cw > cardInnerW {
-			break
-		}
-		chipParts = append(chipParts, chip, " ")
-		usedW += cw
+	descMax := cardInnerW - 3
+	if descMax < 8 {
+		descMax = 8
 	}
-	row3 := lipgloss.JoinHorizontal(lipgloss.Center, chipParts...)
+	row2 := "   " + lipgloss.NewStyle().Foreground(ColorText).Render(truncateText(summary, descMax))
 
-	// Row 4: Install state, Size, Arch/Trust
-	stateStr := lipgloss.NewStyle().Foreground(ColorMuted).Render("[Available]")
-	if offer.IsInstalled || m.isOfferInstalledOnHost(offer) {
-		stateStr = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render("[INSTALLED: " + strings.Title(offer.Provider) + "]")
-	}
+	// Row 3: Metadata & Alternative Offers (No fake trust score, no redundant double provider badge!)
 	sizeStr := offer.DownloadSize
 	if sizeStr == "" {
 		sizeStr = "~45 MB"
 	}
-	score, _ := evaluateOfferTrustScore(offer)
-	metaRight := lipgloss.NewStyle().Foreground(ColorMuted).Render("Size: ") +
-		lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render(sizeStr) +
-		lipgloss.NewStyle().Foreground(ColorMuted).Render(fmt.Sprintf("  Trust: %d/100", score))
 
-	gap4 := cardInnerW - lipgloss.Width(stateStr) - lipgloss.Width(metaRight)
-	if gap4 < 1 {
-		gap4 = 1
+	var row3 string
+	if len(app.Offers) > 1 {
+		// Show alternative offers (excluding the currently active one to prevent double badges)
+		var altBadges []string
+		usedW := 14
+		for _, o := range app.Offers {
+			if strings.EqualFold(o.Provider, offer.Provider) {
+				continue
+			}
+			tag := lipgloss.NewStyle().Foreground(ColorHighlight).Render("[" + strings.ToUpper(o.Provider) + "]")
+			cw := lipgloss.Width(tag) + 1
+			if usedW+cw > cardInnerW-16 {
+				break
+			}
+			altBadges = append(altBadges, tag)
+			usedW += cw
+		}
+		altText := "   " + lipgloss.NewStyle().Foreground(ColorMuted).Render("Also on: ")
+		if len(altBadges) > 0 {
+			altText += strings.Join(altBadges, " ")
+		} else {
+			altText += lipgloss.NewStyle().Foreground(ColorMuted).Render(fmt.Sprintf("+%d channels", len(app.Offers)-1))
+		}
+		sizeLabel := lipgloss.NewStyle().Foreground(ColorMuted).Render("Size: ") +
+			lipgloss.NewStyle().Foreground(ColorPrimarySoft).Render(sizeStr)
+		gap3 := cardInnerW - lipgloss.Width(altText) - lipgloss.Width(sizeLabel)
+		if gap3 < 1 {
+			gap3 = 1
+		}
+		row3 = altText + strings.Repeat(" ", gap3) + sizeLabel
+	} else {
+		// Single offer: Status + Size only (No redundant "Offers: [AUR]")
+		statusLabel := lipgloss.NewStyle().Foreground(ColorMuted).Render("[Available]")
+		if offer.IsInstalled || m.isOfferInstalledOnHost(offer) {
+			statusLabel = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render("[Installed]")
+		}
+		leftMeta := "   " + statusLabel
+		sizeLabel := lipgloss.NewStyle().Foreground(ColorMuted).Render("Size: ") +
+			lipgloss.NewStyle().Foreground(ColorPrimarySoft).Render(sizeStr)
+		gap3 := cardInnerW - lipgloss.Width(leftMeta) - lipgloss.Width(sizeLabel)
+		if gap3 < 1 {
+			gap3 = 1
+		}
+		row3 = leftMeta + strings.Repeat(" ", gap3) + sizeLabel
 	}
-	row4 := stateStr + strings.Repeat(" ", gap4) + metaRight
 
-	cardContent := lipgloss.JoinVertical(lipgloss.Left, row1, row2, row3, row4)
+	cardContent := lipgloss.JoinVertical(lipgloss.Left, row1, row2, row3)
 	if selected {
 		return CanonicalCardSelectedStyle.Width(innerW).Render(cardContent) + "\n"
 	}
@@ -390,7 +401,7 @@ func (m Model) renderInspectorPane(outerW, boxH int) string {
 	var sections []string
 	sections = append(sections, headerLine)
 
-	// 1. App Header & Origin Identity Card
+	// 1. App Header & Identity
 	license := app.License
 	if license == "" {
 		license = "Open Source"
@@ -408,153 +419,107 @@ func (m Model) renderInspectorPane(outerW, boxH int) string {
 		homepage = catalog.HomepageForProvider(offer.Provider, offer.PackageName)
 	}
 
+	instTag := ""
+	if offer.IsInstalled || m.isOfferInstalledOnHost(offer) {
+		instTag = " " + lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render("[INSTALLED]")
+	}
+
 	titleLeft := lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render(app.Name) + " " +
-		lipgloss.NewStyle().Foreground(ColorMuted).Render(offer.Version)
-	titleRight := FilterInactiveStyle.Render(license) + " " +
-		lipgloss.NewStyle().Foreground(ColorOnPrimary).Background(ColorPrimarySoft).Bold(true).Padding(0, 1).Render(sizeBadge)
+		lipgloss.NewStyle().Foreground(ColorMuted).Render(offer.Version) + instTag
+	titleRight := ProviderBadge(offer.Provider) + " " +
+		lipgloss.NewStyle().Foreground(ColorText).Render("["+license+"]") + " " +
+		lipgloss.NewStyle().Foreground(ColorHighlight).Bold(true).Render("["+sizeBadge+"]")
 	tGap := innerW - 2 - lipgloss.Width(titleLeft) - lipgloss.Width(titleRight)
 	if tGap < 1 {
 		tGap = 1
 	}
 	originLine1 := titleLeft + strings.Repeat(" ", tGap) + titleRight
 	originLine2 := lipgloss.NewStyle().Foreground(ColorMuted).Render("Upstream: ") +
-		lipgloss.NewStyle().Foreground(ColorText).Render(truncateText(dev, 24)) +
+		lipgloss.NewStyle().Foreground(ColorText).Render(truncateText(dev, 28)) +
 		lipgloss.NewStyle().Foreground(ColorMuted).Render(" • ID: ") +
-		lipgloss.NewStyle().Foreground(ColorPrimarySoft).Render(truncateText(app.AppID, innerW-40))
+		lipgloss.NewStyle().Foreground(ColorPrimarySoft).Render(truncateText(app.AppID, innerW-44))
 	originLine3 := lipgloss.NewStyle().Foreground(ColorMuted).Render("Homepage: ") +
 		lipgloss.NewStyle().Foreground(ColorHighlight).Underline(true).Render(truncateText(homepage, innerW-14))
 	sections = append(sections, SectionCardStyle.Width(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, originLine1, originLine2, originLine3)))
 
-	// 2. Trust & Integrity Score Card
-	score, trustTag := evaluateOfferTrustScore(offer)
-	trustBadge := TrustBadgeLowStyle.Render(trustTag)
-	if score >= 90 {
-		trustBadge = TrustBadgeHighStyle.Render(trustTag)
-	} else if score >= 65 {
-		trustBadge = TrustBadgeMedStyle.Render(trustTag)
+	// 2. Package Description (Prominently displayed and cleanly wrapped)
+	descHeader := lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("DESCRIPTION:")
+	fullDesc := app.Description
+	if fullDesc == "" {
+		fullDesc = app.Summary
 	}
-	sigStatus := offer.SignatureStatus
-	if sigStatus == "" {
-		sigStatus = offer.Trust.SignatureStatus
+	if fullDesc == "" {
+		fullDesc = "No extended package description provided by upstream."
 	}
-	if sigStatus == "" {
-		sigStatus = "unverified"
-	}
-	isoLabel := "Host System Linkage"
-	if offer.InstallScope == catalog.ScopeSandboxed {
-		isoLabel = "Bubblewrap / Confined Sandbox"
-	} else if offer.InstallScope == catalog.ScopeUser {
-		isoLabel = "User-Scoped Build"
-	}
-
-	trustTitle := lipgloss.NewStyle().Foreground(ColorSecondary).Render("🛡 ") +
-		lipgloss.NewStyle().Foreground(ColorTextBright).Bold(true).Render("Trust & Integrity: ") +
-		lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(fmt.Sprintf("%d/100 ", score)) +
-		trustBadge
-	trustGrid1 := lipgloss.NewStyle().Foreground(ColorSecondary).Render("✔ ") +
-		lipgloss.NewStyle().Foreground(ColorMuted).Render("Sig: ") +
-		lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(truncateText(sigStatus, 22)) +
-		"   " +
-		lipgloss.NewStyle().Foreground(ColorSecondary).Render("✔ ") +
-		lipgloss.NewStyle().Foreground(ColorMuted).Render("Isolation: ") +
-		lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(truncateText(isoLabel, 26))
-	sections = append(sections, SectionCardStyle.Width(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, trustTitle, trustGrid1)))
-
-	// 3. Select Offer / Distribution Target
-	offerHdrLeft := lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("SELECT OFFER / DISTRIBUTION TARGET:")
-	offerHdrRight := lipgloss.NewStyle().Foreground(ColorMuted).Render("Press [o] to cycle")
-	oGap := innerW - 2 - lipgloss.Width(offerHdrLeft) - lipgloss.Width(offerHdrRight)
-	if oGap < 1 {
-		oGap = 1
-	}
-	var offerRows []string
-	offerRows = append(offerRows, offerHdrLeft+strings.Repeat(" ", oGap)+offerHdrRight)
-
-	maxOffers := 3
+	maxDescLines := 4
 	if boxH >= 28 {
-		maxOffers = 4
+		maxDescLines = 6
 	}
-	for i, o := range app.Offers {
-		if i >= maxOffers {
-			offerRows = append(offerRows, lipgloss.NewStyle().Foreground(ColorMuted).Render(fmt.Sprintf("   ... +%d more offers (press [o] to cycle)", len(app.Offers)-maxOffers)))
-			break
-		}
-		radio := "( )"
-		rowStyle := lipgloss.NewStyle().Foreground(ColorText)
-		if o.ID == offer.ID {
-			radio = lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("(*)")
-			rowStyle = lipgloss.NewStyle().Foreground(ColorTextBright).Bold(true)
-		}
-		recTag := ""
-		if o.RecommendationBadge != "" {
-			recTag = " (" + o.RecommendationBadge + ")"
-		}
-		instTag := ""
-		if o.IsInstalled || m.isOfferInstalledOnHost(o) {
-			instTag = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(" [INSTALLED]")
-		}
-		line := fmt.Sprintf("%s %s %s%s%s  %s",
-			radio,
-			ProviderBadge(o.Provider),
-			rowStyle.Render(truncateText(o.Version, 16)),
-			lipgloss.NewStyle().Foreground(ColorMuted).Render(recTag),
-			instTag,
-			lipgloss.NewStyle().Foreground(ColorMuted).Render(o.DownloadSize),
-		)
-		offerRows = append(offerRows, clampStyledWidth(line, innerW-2))
+	wrappedLines := wrapText(fullDesc, innerW-6, maxDescLines)
+	var descLines []string
+	descLines = append(descLines, descHeader)
+	for _, l := range wrappedLines {
+		descLines = append(descLines, "  "+lipgloss.NewStyle().Foreground(ColorText).Render(l))
 	}
-	sections = append(sections, SectionCardStyle.Width(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, offerRows...)))
+	sections = append(sections, SectionCardStyle.Width(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, descLines...)))
 
-	// 4. Sandbox Permissions Matrix (render if vertical space permits)
-	if boxH >= 24 {
-		perms := formatOfferPermissions(offer)
-		permHdr := lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("SANDBOX PERMISSIONS MATRIX:")
-		var permLines []string
-		permLines = append(permLines, permHdr)
-		for i := 0; i < len(perms); i += 2 {
-			leftP := formatPermItem(perms[i], (innerW-6)/2)
-			if i+1 < len(perms) {
-				rightP := formatPermItem(perms[i+1], (innerW-6)/2)
-				permLines = append(permLines, leftP+"  "+rightP)
-			} else {
-				permLines = append(permLines, leftP)
+	// 3. Source & Security Verification (Truthful, honest, no fake scores)
+	originName, integrityNote, isolationNote := getTruthfulIntegrity(offer)
+	verHeader := lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("SOURCE & INTEGRITY:")
+	vLine1 := lipgloss.NewStyle().Foreground(ColorSecondary).Render("✔ ") +
+		lipgloss.NewStyle().Foreground(ColorMuted).Render("Origin:    ") +
+		lipgloss.NewStyle().Foreground(ColorText).Bold(true).Render(originName)
+	vLine2 := lipgloss.NewStyle().Foreground(ColorSecondary).Render("✔ ") +
+		lipgloss.NewStyle().Foreground(ColorMuted).Render("Security:  ") +
+		lipgloss.NewStyle().Foreground(ColorText).Render(integrityNote)
+	vLine3 := lipgloss.NewStyle().Foreground(ColorSecondary).Render("✔ ") +
+		lipgloss.NewStyle().Foreground(ColorMuted).Render("Isolation: ") +
+		lipgloss.NewStyle().Foreground(ColorText).Render(isolationNote)
+	sections = append(sections, SectionCardStyle.Width(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, verHeader, vLine1, vLine2, vLine3)))
+
+	// 4. Select Distribution Source (if multiple offers exist)
+	if len(app.Offers) > 1 {
+		offerHdrLeft := lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("SELECT OFFER / DISTRIBUTION TARGET:")
+		offerHdrRight := lipgloss.NewStyle().Foreground(ColorMuted).Render("Press [o] to cycle")
+		oGap := innerW - 2 - lipgloss.Width(offerHdrLeft) - lipgloss.Width(offerHdrRight)
+		if oGap < 1 {
+			oGap = 1
+		}
+		var offerRows []string
+		offerRows = append(offerRows, offerHdrLeft+strings.Repeat(" ", oGap)+offerHdrRight)
+
+		maxOffers := 3
+		if boxH >= 28 {
+			maxOffers = 4
+		}
+		for i, o := range app.Offers {
+			if i >= maxOffers {
+				offerRows = append(offerRows, lipgloss.NewStyle().Foreground(ColorMuted).Render(fmt.Sprintf("   ... +%d more sources (press [o] to cycle)", len(app.Offers)-maxOffers)))
+				break
 			}
-		}
-		sections = append(sections, SectionCardStyle.Width(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, permLines...)))
-	}
-
-	// 5. Strategy Resolution / Dependency Tree
-	if boxH >= 20 {
-		treeHdr := lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("STRATEGY RESOLUTION TREE:")
-		var deps []string
-		if len(offer.Dependencies) > 0 {
-			deps = offer.Dependencies
-		} else if info, ok := m.pkgInfo[offer.PackageName]; ok && len(info.Dependencies) > 0 {
-			deps = info.Dependencies
-		}
-		var treeLines []string
-		treeLines = append(treeLines, treeHdr)
-		treeLines = append(treeLines, lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("📦 "+offer.PackageName+" ("+offer.Repository+")"))
-		if len(deps) > 0 {
-			maxDeps := 3
-			for i, d := range deps {
-				if i >= maxDeps {
-					treeLines = append(treeLines, lipgloss.NewStyle().Foreground(ColorMuted).Render(fmt.Sprintf(" └── +%d more dependencies", len(deps)-maxDeps)))
-					break
-				}
-				branch := "├──"
-				if i == len(deps)-1 || i == maxDeps-1 && len(deps) == maxDeps {
-					branch = "└──"
-				}
-				treeLines = append(treeLines, " "+BranchTreeStyle.Render(branch)+" "+lipgloss.NewStyle().Foreground(ColorText).Render(d))
+			radio := "( )"
+			rowStyle := lipgloss.NewStyle().Foreground(ColorText)
+			if o.ID == offer.ID {
+				radio = lipgloss.NewStyle().Foreground(ColorPrimarySoft).Bold(true).Render("(*)")
+				rowStyle = lipgloss.NewStyle().Foreground(ColorTextBright).Bold(true)
 			}
-		} else {
-			treeLines = append(treeLines, lipgloss.NewStyle().Foreground(ColorMuted).Render(" └── Bundled / zero additional host dependencies"))
+			oInst := ""
+			if o.IsInstalled || m.isOfferInstalledOnHost(o) {
+				oInst = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(" [INSTALLED]")
+			}
+			line := fmt.Sprintf("%s %s %s%s  %s",
+				radio,
+				ProviderBadge(o.Provider),
+				rowStyle.Render(truncateText(o.Version, 16)),
+				oInst,
+				lipgloss.NewStyle().Foreground(ColorMuted).Render(o.DownloadSize),
+			)
+			offerRows = append(offerRows, clampStyledWidth(line, innerW-2))
 		}
-		sections = append(sections, SectionCardStyle.Width(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, treeLines...)))
+		sections = append(sections, SectionCardStyle.Width(innerW).Render(lipgloss.JoinVertical(lipgloss.Left, offerRows...)))
 	}
 
-	// 6. Read-Only Executable Command Preview
+	// 5. Read-Only Executable Command Preview
 	cmdPreview := offer.CommandPreview
 	if cmdPreview == "" {
 		cmdPreview = catalog.FormatCommandPreview(offer.Provider, offer.Repository, offer.PackageName, offer.Branch, offer.Channel)
@@ -563,17 +528,17 @@ func (m Model) renderInspectorPane(outerW, boxH int) string {
 		CommandPreviewBoxStyle.Render("$ "+truncateText(cmdPreview, innerW-14))
 	sections = append(sections, cmdLine)
 
-	// 7. Action Buttons Row
+	// 6. Action Buttons Row
 	isInstalled := offer.IsInstalled || m.isOfferInstalledOnHost(offer)
 	primaryBtnLabel := "[ i: Install " + truncateText(offer.PackageName, 16) + " ]"
 	if isInstalled {
-		primaryBtnLabel = "[ Enter: Refresh / Launch ]"
+		primaryBtnLabel = "[ Enter: Launch / Update ]"
 	}
 	btnRow := lipgloss.JoinHorizontal(
 		lipgloss.Center,
 		ActionBtnPrimaryStyle.Render(primaryBtnLabel),
 		" ",
-		ActionBtnSecondaryStyle.Render("[ i: Install/Switch ]"),
+		ActionBtnSecondaryStyle.Render("[ o: Switch Source ]"),
 		" ",
 		ActionBtnDangerStyle.Render("[ r: Remove ]"),
 		" ",
@@ -583,6 +548,81 @@ func (m Model) renderInspectorPane(outerW, boxH int) string {
 
 	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
 	return CardStyle.Width(outerW - 2).Height(boxH).MaxHeight(boxH + 2).Render(content)
+}
+
+func wrapText(text string, maxW int, maxLines int) []string {
+	if maxW < 10 {
+		maxW = 10
+	}
+	clean := strings.ReplaceAll(text, "\n", " ")
+	words := strings.Fields(strings.TrimSpace(clean))
+	if len(words) == 0 {
+		return []string{"No extended package description provided."}
+	}
+	var lines []string
+	var cur strings.Builder
+	for _, w := range words {
+		if cur.Len() == 0 {
+			cur.WriteString(w)
+		} else if cur.Len()+1+len(w) <= maxW {
+			cur.WriteString(" ")
+			cur.WriteString(w)
+		} else {
+			lines = append(lines, cur.String())
+			if len(lines) >= maxLines {
+				return lines
+			}
+			cur.Reset()
+			cur.WriteString(w)
+		}
+	}
+	if cur.Len() > 0 && len(lines) < maxLines {
+		lines = append(lines, cur.String())
+	}
+	return lines
+}
+
+func getTruthfulIntegrity(offer catalog.PackageOffer) (origin, integrity, isolation string) {
+	prov := strings.ToLower(strings.TrimSpace(offer.Provider))
+	repo := strings.ToLower(strings.TrimSpace(offer.Repository))
+
+	switch {
+	case prov == "pacman" || prov == "repository" || prov == "paru":
+		origin = "Arch Official Repository"
+		if repo != "" {
+			origin = "Arch Official Repository (" + strings.Title(repo) + ")"
+		}
+		integrity = "Keyring Verified (Arch Linux Packager PGP)"
+		isolation = "Native System (Direct Host Execution)"
+	case prov == "aur":
+		origin = "Arch User Repository (AUR)"
+		integrity = "Community PKGBUILD (Inspect with [v] before build)"
+		isolation = "User-Scoped makepkg / Rootless Sandbox"
+	case prov == "flatpak" || prov == "flathub":
+		origin = "Flathub (flathub.org)"
+		integrity = "OSTree Commit Signed (Flathub GPG Key)"
+		isolation = "Bubblewrap Container (Confined Filesystem)"
+	case prov == "snap":
+		origin = "Canonical Snap Store"
+		integrity = "Snap Store Signed Assertion"
+		isolation = "AppArmor / cgroups Confinement"
+	case prov == "apt" || prov == "deb":
+		origin = "Debian/Ubuntu Repository"
+		if repo != "" {
+			origin = "Debian/Ubuntu Repository (" + strings.Title(repo) + ")"
+		}
+		integrity = "GPG Signed Archive"
+		isolation = "Native System (Direct Host Execution)"
+	case prov == "dnf" || prov == "rpm":
+		origin = "Fedora/RHEL RPM Repository"
+		integrity = "RPM GPG Signed"
+		isolation = "Native System (Direct Host Execution)"
+	default:
+		origin = strings.ToUpper(prov) + " Distribution"
+		integrity = "Upstream Release Hashes"
+		isolation = "Host Native"
+	}
+	return origin, integrity, isolation
 }
 
 func formatPermItem(p PermissionRow, maxW int) string {

@@ -1048,6 +1048,8 @@ func (m Model) filteredUnifiedApps() []catalog.UnifiedApplication {
 			sj, _ := evaluateOfferTrustScore(m.activeOfferForApp(filtered[j]))
 			return si > sj
 		})
+	default: // "relevance"
+		catalog.SortByRelevance(filtered, m.textInput.Value())
 	}
 	return filtered
 }

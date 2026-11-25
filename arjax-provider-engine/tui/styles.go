@@ -20,21 +20,21 @@ var (
 	ColorText           = lipgloss.Color("#C3C6D3")
 	ColorTextBright     = lipgloss.Color("#E2E1F1")
 
-	ColorPrimary          = lipgloss.Color("#7AA2F7")
-	ColorPrimarySoft      = lipgloss.Color("#AEC6FF")
-	ColorOnPrimary        = lipgloss.Color("#002E6B")
-	ColorOnPrimaryCont    = lipgloss.Color("#00367D")
-	ColorAccent           = lipgloss.Color("#D4BBFF")
-	ColorSecondaryCont    = lipgloss.Color("#56378D")
-	ColorOnSecondaryCont  = lipgloss.Color("#C8A9FF")
-	ColorSecondary        = lipgloss.Color("#A5D570")
-	ColorTertiaryCont     = lipgloss.Color("#83B151")
-	ColorOnTertiaryCont   = lipgloss.Color("#244100")
-	ColorHighlight        = lipgloss.Color("#7DCFFF")
-	ColorDanger           = lipgloss.Color("#FFB4AB")
-	ColorDangerCont       = lipgloss.Color("#93000A")
-	ColorWarning          = lipgloss.Color("#E0AF68")
-	ColorSelectionBg      = lipgloss.Color("#282935")
+	ColorPrimary         = lipgloss.Color("#7AA2F7")
+	ColorPrimarySoft     = lipgloss.Color("#AEC6FF")
+	ColorOnPrimary       = lipgloss.Color("#002E6B")
+	ColorOnPrimaryCont   = lipgloss.Color("#00367D")
+	ColorAccent          = lipgloss.Color("#D4BBFF")
+	ColorSecondaryCont   = lipgloss.Color("#56378D")
+	ColorOnSecondaryCont = lipgloss.Color("#C8A9FF")
+	ColorSecondary       = lipgloss.Color("#A5D570")
+	ColorTertiaryCont    = lipgloss.Color("#83B151")
+	ColorOnTertiaryCont  = lipgloss.Color("#244100")
+	ColorHighlight       = lipgloss.Color("#7DCFFF")
+	ColorDanger          = lipgloss.Color("#FFB4AB")
+	ColorDangerCont      = lipgloss.Color("#93000A")
+	ColorWarning         = lipgloss.Color("#E0AF68")
+	ColorSelectionBg     = lipgloss.Color("#282935")
 
 	// Provider Specific Colors
 	ColorPacman = lipgloss.Color("#04B575")
@@ -64,12 +64,10 @@ var (
 			Italic(true)
 
 	TopWindowBarStyle = lipgloss.NewStyle().
-				Background(ColorSurfaceLow).
 				Foreground(ColorText).
 				Padding(0, 1)
 
 	TopNavBarStyle = lipgloss.NewStyle().
-			Background(ColorSurfaceLowest).
 			Foreground(ColorText).
 			Padding(0, 1)
 
@@ -80,21 +78,18 @@ var (
 				Padding(0, 1)
 
 	InactiveNavTabStyle = lipgloss.NewStyle().
-				Foreground(ColorText).
-				Background(ColorSurfaceLowest).
+				Foreground(ColorMuted).
 				Padding(0, 1)
 
 	// Search & Filter Bar Styles
 	SearchFocusedStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(ColorPrimary).
-				Background(ColorSurfaceLowest).
 				Padding(0, 1)
 
 	SearchBlurredStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(ColorSubtle).
-				Background(ColorSurfaceLowest).
 				Padding(0, 1)
 
 	SearchInputStyle = SearchFocusedStyle
@@ -106,41 +101,34 @@ var (
 				Padding(0, 1)
 
 	FilterInactiveStyle = lipgloss.NewStyle().
-				Foreground(ColorText).
-				Background(ColorCardBg).
+				Foreground(ColorMuted).
 				Padding(0, 1)
 
 	MetaChipStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(ColorPrimarySoft).
-			Background(ColorCardBg).
 			Padding(0, 1)
 
 	// Panes & Cards
 	CardStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorSubtle).
-			Background(ColorSurfaceLowest).
 			Padding(0, 1)
 
 	CardFocusedStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(ColorPrimary).
-				Background(ColorSurfaceLowest).
 				Padding(0, 1)
 
 	SectionCardStyle = lipgloss.NewStyle().
-				Background(ColorSurfaceLow).
 				Padding(0, 1)
 
 	CanonicalCardStyle = lipgloss.NewStyle().
-				Background(ColorSurfaceLow).
 				Padding(0, 1)
 
 	CanonicalCardSelectedStyle = lipgloss.NewStyle().
-					Background(ColorSurfaceHigh).
 					Border(lipgloss.NormalBorder(), false, false, false, true).
-					BorderForeground(ColorPrimary).
+					BorderForeground(ColorPrimarySoft).
 					Padding(0, 1)
 
 	// Inspector Tabs (used inside subviews)
@@ -153,7 +141,6 @@ var (
 
 	InactiveTabStyle = lipgloss.NewStyle().
 				Foreground(ColorMuted).
-				Background(ColorCardBg).
 				Padding(0, 1).
 				MarginRight(1)
 
@@ -164,14 +151,14 @@ var (
 
 	ListItemSelectedStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(ColorTextBright).
-				Background(ColorSurfaceHigh).
+				Foreground(ColorPrimarySoft).
+				Border(lipgloss.NormalBorder(), false, false, false, true).
+				BorderForeground(ColorPrimary).
 				Padding(0, 1)
 
 	// Offer Chips & Trust Badges
 	OfferChipStyle = lipgloss.NewStyle().
-			Foreground(ColorText).
-			Background(ColorCardBg).
+			Foreground(ColorMuted).
 			Padding(0, 1)
 
 	OfferChipActiveStyle = lipgloss.NewStyle().
@@ -205,7 +192,8 @@ var (
 				Padding(0, 1)
 
 	CommandPreviewBoxStyle = lipgloss.NewStyle().
-				Background(ColorSurfaceHigh).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(ColorSubtle).
 				Foreground(ColorPrimarySoft).
 				Bold(true).
 				Padding(0, 1)

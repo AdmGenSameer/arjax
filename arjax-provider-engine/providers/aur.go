@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
@@ -58,34 +59,68 @@ func (ap *AURProvider) Search(ctx context.Context, query string) ([]models.Packa
 		return nil, fmt.Errorf("AUR provider not supported")
 	}
 
-	endpoint := fmt.Sprintf("https://aur.archlinux.org/rpc/?v=5&type=search&arg=%s", url.QueryEscape(query))
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
-	if err != nil {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	terms := strings.Fields(trimmed)
+
+	fetchRPC := func(arg string) ([]models.Package, error) {
+		endpoint := fmt.Sprintf("https://aur.archlinux.org/rpc/?v=5&type=search&arg=%s", url.QueryEscape(arg))
+		req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		var rpcResp aurRPCResponse
+		if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+			return nil, err
+		}
+
+		var pkgs []models.Package
+		for _, res := range rpcResp.Results {
+			pkgs = append(pkgs, models.Package{
+				Name:        res.Name,
+				Version:     res.Version,
+				Description: res.Description,
+				Provider:    "aur",
+				Source:      "aur",
+			})
+		}
+		return pkgs, nil
+	}
+
+	pkgs, err := fetchRPC(trimmed)
+	if err != nil && len(terms) <= 1 {
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
+	// For multi-word queries, package names cannot have spaces so AUR RPC type=search
+	// returns few or no results. Also fetch for the primary term and merge.
+	if len(terms) > 1 {
+		primaryPkgs, pErr := fetchRPC(terms[0])
+		if pErr == nil && len(primaryPkgs) > 0 {
+			seen := make(map[string]bool, len(pkgs)+len(primaryPkgs))
+			for _, p := range pkgs {
+				seen[p.Name] = true
+			}
+			for _, p := range primaryPkgs {
+				if !seen[p.Name] {
+					seen[p.Name] = true
+					pkgs = append(pkgs, p)
+				}
+			}
+		}
 	}
-	defer resp.Body.Close()
 
-	var rpcResp aurRPCResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
-		return nil, err
-	}
-
-	var pkgs []models.Package
-	for _, res := range rpcResp.Results {
-		pkgs = append(pkgs, models.Package{
-			Name:        res.Name,
-			Version:     res.Version,
-			Description: res.Description,
-			Provider:    "aur",
-			Source:      "aur",
-		})
-	}
 	return pkgs, nil
 }
 

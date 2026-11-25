@@ -289,10 +289,9 @@ func TestTUICanonicalInspectorAndOfferCycling(t *testing.T) {
 	for _, want := range []string{
 		"CANONICAL PACKAGES",
 		"PACKAGE INSPECTOR: zapfast",
-		"Trust & Integrity:",
+		"SOURCE & INTEGRITY:",
 		"SELECT OFFER / DISTRIBUTION TARGET:",
-		"SANDBOX PERMISSIONS MATRIX:",
-		"STRATEGY RESOLUTION TREE:",
+		"DESCRIPTION:",
 		"flatpak install --user flathub io.zapsoft.Zapfast",
 	} {
 		if !strings.Contains(view, want) {
@@ -437,6 +436,3 @@ func TestTUIDebounceSearchIgnoresStaleTokens(t *testing.T) {
 		t.Errorf("expected matching debounce seq to trigger background search")
 	}
 }
-
-
-

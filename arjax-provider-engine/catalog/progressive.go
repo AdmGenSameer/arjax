@@ -352,6 +352,7 @@ SearchLoop:
 			allPackages = append(allPackages, res.packages...)
 
 			unifiedApps := pse.deduper.GroupAndDeduplicate(allPackages, allCrawlerMeta, installedMap)
+			SortByRelevance(unifiedApps, trimmed)
 			var addedApps []UnifiedApplication
 			var updatedApps []UnifiedApplication
 			var discoveredOffers []PackageOffer

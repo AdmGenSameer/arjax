@@ -41,21 +41,43 @@ func (rp *RepositoryProvider) Search(ctx context.Context, query string) ([]model
 		return nil, fmt.Errorf("repository provider not supported on this system")
 	}
 
+	terms := strings.Fields(strings.TrimSpace(query))
+	if len(terms) == 0 {
+		return nil, nil
+	}
+
 	var args []string
 	switch rp.pm {
 	case "paru", "pacman":
-		args = []string{"-Ss", query}
+		args = append([]string{"-Ss"}, terms...)
 	case "apt":
-		args = []string{"search", query}
+		args = append([]string{"search"}, terms...)
 	case "dnf":
-		args = []string{"search", query}
+		args = append([]string{"search"}, terms...)
 	case "zypper":
-		args = []string{"search", query}
+		args = append([]string{"search"}, terms...)
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", rp.pm)
 	}
 
 	res := utils.RunCommand(ctx, rp.pm, args...)
+	if len(terms) > 1 && (res.Stdout == "" || strings.TrimSpace(res.Stdout) == "") {
+		// Fallback to searching primary term if multi-term search yielded no results
+		var fallbackArgs []string
+		switch rp.pm {
+		case "paru", "pacman":
+			fallbackArgs = []string{"-Ss", terms[0]}
+		case "apt", "dnf", "zypper":
+			fallbackArgs = []string{"search", terms[0]}
+		}
+		if len(fallbackArgs) > 0 {
+			fallbackRes := utils.RunCommand(ctx, rp.pm, fallbackArgs...)
+			if fallbackRes.Stdout != "" {
+				res = fallbackRes
+			}
+		}
+	}
+
 	if res.Error != nil && res.ExitCode != 0 && res.Stdout == "" {
 		return nil, res.Error
 	}
