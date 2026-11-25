@@ -537,10 +537,10 @@ export const PackagePage: React.FC = () => {
                 onClick={() => handleInstall()}
                 disabled={installStatus === 'installing' || installStatus === 'installed'}
                 className={`app-install-btn w-full py-3 px-4 rounded-lg font-label-md text-label-md font-semibold flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98] cursor-pointer ${installStatus === 'installed'
-                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                    : installStatus === 'installing'
-                      ? 'bg-primary-container/80 text-on-primary-container opacity-85'
-                      : 'bg-primary-container hover:bg-primary-container/90 text-on-primary-container'
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : installStatus === 'installing'
+                    ? 'bg-primary-container/80 text-on-primary-container opacity-85'
+                    : 'bg-primary-container hover:bg-primary-container/90 text-on-primary-container'
                   }`}
                 type="button"
               >
@@ -684,8 +684,8 @@ export const PackagePage: React.FC = () => {
                   key={s.title + idx}
                   onClick={() => setActivePreviewIdx(idx)}
                   className={`screenshot-thumb relative aspect-[16/9] rounded-lg overflow-hidden bg-surface-container-high transition-all text-left group cursor-pointer ${activePreviewIdx === idx
-                      ? 'ring-2 ring-primary-container opacity-100'
-                      : 'opacity-70 hover:opacity-100'
+                    ? 'ring-2 ring-primary-container opacity-100'
+                    : 'opacity-70 hover:opacity-100'
                     }`}
                   type="button"
                 >
@@ -953,8 +953,8 @@ export const PackagePage: React.FC = () => {
                         handleInstallComplementary(app.id, app.name, app.provider);
                       }}
                       className={`px-3 py-1 rounded-md text-label-sm font-label-sm transition cursor-pointer ${complimentaryInstalled[app.id]
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : 'bg-surface-container-highest text-on-surface hover:bg-primary-container hover:text-on-primary-container'
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        : 'bg-surface-container-highest text-on-surface hover:bg-primary-container hover:text-on-primary-container'
                         }`}
                       type="button"
                     >

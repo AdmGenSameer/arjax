@@ -318,8 +318,8 @@ export const SearchPage: React.FC = () => {
                 onClick={() => setSelectedFilter(f)}
                 type="button"
                 className={`px-3 py-1.5 rounded-lg text-[11px] font-mono uppercase tracking-wider transition-all cursor-pointer ${selectedFilter === f
-                    ? 'bg-fluent-blue text-white font-semibold shadow-sm'
-                    : 'bg-mica-base/60 text-fluent-muted border border-mica-border hover:bg-mica-surface hover:text-fluent-text'
+                  ? 'bg-fluent-blue text-white font-semibold shadow-sm'
+                  : 'bg-mica-base/60 text-fluent-muted border border-mica-border hover:bg-mica-surface hover:text-fluent-text'
                   }`}
               >
                 {f}
@@ -333,13 +333,12 @@ export const SearchPage: React.FC = () => {
                 <span
                   key={st.provider}
                   title={st.error || `${st.provider}: ${st.status}`}
-                  className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                    st.status === 'completed'
-                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-                      : st.status === 'failed'
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded border ${st.status === 'completed'
+                    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                    : st.status === 'failed'
                       ? 'bg-red-500/10 text-red-300 border-red-500/20'
                       : 'bg-white/5 text-fluent-muted border-white/10'
-                  }`}
+                    }`}
                 >
                   {st.provider}
                   {st.status === 'completed' ? ` (${st.resultCount ?? 0})` : st.status === 'failed' ? ' !' : '...'}
@@ -428,8 +427,8 @@ export const SearchPage: React.FC = () => {
                           <span
                             key={offer.id}
                             className={`px-1.5 py-0.2 rounded uppercase text-[10px] font-semibold border ${offer.id === app.defaultOfferId
-                                ? 'bg-primary/20 text-primary border-primary/30'
-                                : 'bg-white/5 text-fluent-muted border-white/5'
+                              ? 'bg-primary/20 text-primary border-primary/30'
+                              : 'bg-white/5 text-fluent-muted border-white/5'
                               }`}
                           >
                             {offer.provider} ({offer.repository || offer.source})
@@ -455,8 +454,8 @@ export const SearchPage: React.FC = () => {
                     onClick={() => handleInstall(app)}
                     disabled={isOfferInstalled}
                     className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${isOfferInstalled
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        : 'bg-fluent-blue hover:bg-fluent-blueHover text-white shadow-fluent-btn active:scale-95'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                      : 'bg-fluent-blue hover:bg-fluent-blueHover text-white shadow-fluent-btn active:scale-95'
                       }`}
                   >
                     {isOfferInstalled ? (

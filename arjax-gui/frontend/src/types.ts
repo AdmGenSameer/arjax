@@ -190,16 +190,16 @@ export interface TransactionDTO {
   repository: string;
   operation: 'install' | 'remove' | 'update' | string;
   state:
-    | 'queued'
-    | 'resolving_deps'
-    | 'awaiting_auth'
-    | 'downloading'
-    | 'verifying'
-    | 'installing'
-    | 'completed'
-    | 'failed'
-    | 'cancelled'
-    | string;
+  | 'queued'
+  | 'resolving_deps'
+  | 'awaiting_auth'
+  | 'downloading'
+  | 'verifying'
+  | 'installing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | string;
   progress: number;
   message: string;
   dependencies?: string[];
