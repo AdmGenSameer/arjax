@@ -31,12 +31,20 @@ func TestApp_UnifiedAppDetails(t *testing.T) {
 		t.Errorf("Expected at least one package offer for firefox")
 	}
 
-	// Verify that user preference is honored
+	// Verify that user preference is honored across eligible offers
 	if len(details.Offers) > 1 {
-		secondOfferID := details.Offers[1].ID
-		preferredDetails := app.GetUnifiedAppDetails("firefox", secondOfferID)
-		if preferredDetails.DefaultOfferID != secondOfferID {
-			t.Errorf("Expected DefaultOfferID to match user preferred offer %s, got %s", secondOfferID, preferredDetails.DefaultOfferID)
+		var secondOfferID string
+		for i := 1; i < len(details.Offers); i++ {
+			if details.Offers[i].IsEligible {
+				secondOfferID = details.Offers[i].ID
+				break
+			}
+		}
+		if secondOfferID != "" {
+			preferredDetails := app.GetUnifiedAppDetails("firefox", secondOfferID)
+			if preferredDetails.DefaultOfferID != secondOfferID {
+				t.Errorf("Expected DefaultOfferID to match user preferred offer %s, got %s (offers=%+v)", secondOfferID, preferredDetails.DefaultOfferID, preferredDetails.Offers)
+			}
 		}
 	}
 
@@ -143,3 +151,22 @@ func TestApp_ProgressiveSearchEvents(t *testing.T) {
 	_ = models.Package{}
 }
 
+// TestApp_OfferAuthorityAndCapabilities verifies OfferID rejection and capability matrix exposure
+func TestApp_OfferAuthorityAndCapabilities(t *testing.T) {
+	app := NewApp()
+
+	caps := app.GetProviderCapabilities()
+	if len(caps) < 6 {
+		t.Fatalf("Expected at least 6 tracked provider capabilities, got %d", len(caps))
+	}
+
+	tx := app.InstallOffer("forged:pacman:rm-rf")
+	if tx.State != catalog.TxFailed {
+		t.Errorf("Expected unknown OfferID to be rejected with TxFailed, got %s", tx.State)
+	}
+
+	app.SetRecommendationPolicy(string(catalog.PolicySandboxPreferred))
+	if app.GetRecommendationPolicy() != string(catalog.PolicySandboxPreferred) {
+		t.Errorf("Expected PolicySandboxPreferred to persist, got %s", app.GetRecommendationPolicy())
+	}
+}

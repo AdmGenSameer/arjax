@@ -256,9 +256,13 @@ func (gp *GitHubProvider) Update(ctx context.Context) (models.Result, error) {
 }
 
 func (gp *GitHubProvider) Info(ctx context.Context, pkgName string) (models.PackageInfo, error) {
+	if !strings.Contains(pkgName, "/") {
+		return models.PackageInfo{}, fmt.Errorf("github provider requires owner/repo slug, got %q", pkgName)
+	}
 	return models.PackageInfo{
 		Name:     pkgName,
 		Provider: "github",
+		Repo:     "github",
 	}, nil
 }
 

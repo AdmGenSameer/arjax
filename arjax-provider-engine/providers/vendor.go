@@ -67,10 +67,7 @@ func (vp *VendorProvider) Update(ctx context.Context) (models.Result, error) {
 }
 
 func (vp *VendorProvider) Info(ctx context.Context, pkgName string) (models.PackageInfo, error) {
-	return models.PackageInfo{
-		Name:     pkgName,
-		Provider: "vendor",
-	}, nil
+	return models.PackageInfo{}, fmt.Errorf("vendor info requires explicit custom source")
 }
 
 func (vp *VendorProvider) BatchInstall(ctx context.Context, pkgs []models.Package) ([]models.Result, error) {

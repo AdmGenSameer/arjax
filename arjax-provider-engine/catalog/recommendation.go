@@ -5,51 +5,54 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/providers"
 )
 
-// RecommendationEngine scores, filters, and explains package offers
+// RecommendationEngine evaluates eligibility, trust compliance, version recency,
+// dependency footprint, and policy preferences separately from isolation/trust storage.
 type RecommendationEngine struct {
-	config CatalogConfig
+	config       CatalogConfig
+	capabilities map[string]providers.ProviderCapability
 }
 
-// NewRecommendationEngine initializes a recommendation engine with the provided config
+// NewRecommendationEngine initializes a recommendation engine with host capability introspection.
 func NewRecommendationEngine(cfg CatalogConfig) *RecommendationEngine {
 	return &RecommendationEngine{
-		config: cfg,
+		config:       cfg,
+		capabilities: providers.DefaultCapabilityMatrix(),
 	}
 }
 
-// CheckEligibility tests whether an offer can be installed on the current host system
-func (r *RecommendationEngine) CheckEligibility(offer *PackageOffer) {
-	prov := strings.ToLower(offer.Provider)
+// NewRecommendationEngineWithCapabilities constructs an engine with explicit capabilities (useful in tests).
+func NewRecommendationEngineWithCapabilities(cfg CatalogConfig, caps map[string]providers.ProviderCapability) *RecommendationEngine {
+	if caps == nil {
+		caps = providers.DefaultCapabilityMatrix()
+	}
+	return &RecommendationEngine{
+		config:       cfg,
+		capabilities: caps,
+	}
+}
 
-	switch prov {
-	case "flatpak":
-		if !utils.CommandExists("flatpak") {
+// CheckEligibility verifies both host provider capabilities and active policy constraints.
+func (r *RecommendationEngine) CheckEligibility(offer *PackageOffer) {
+	prov := strings.ToLower(strings.TrimSpace(offer.Provider))
+
+	// 1. Check host provider capabilities
+	if capInfo, ok := r.capabilities[prov]; ok {
+		if eligible, reason := capInfo.CanPerform("install"); !eligible {
 			offer.IsEligible = false
-			offer.IneligibleReason = "Flatpak runtime CLI is not installed on this system"
+			offer.IneligibleReason = reason
 			offer.Score = 0
 			return
 		}
-	case "snap":
-		if !utils.CommandExists("snap") {
+	}
+
+	// 2. Enforce OfficialOnly policy constraint
+	if r.config.Policy == PolicyOfficialOnly {
+		if offer.Trust.TrustLevel != TrustOfficial && offer.Trust.TrustLevel != TrustVerified {
 			offer.IsEligible = false
-			offer.IneligibleReason = "Snapd service is not installed or enabled on this system"
-			offer.Score = 0
-			return
-		}
-	case "aur":
-		if !utils.CommandExists("paru") && !utils.CommandExists("yay") && !utils.CommandExists("makepkg") {
-			offer.IsEligible = false
-			offer.IneligibleReason = "No AUR helper (paru/yay) or makepkg found on system"
-			offer.Score = 0
-			return
-		}
-	case "pacman":
-		if !utils.CommandExists("pacman") {
-			offer.IsEligible = false
-			offer.IneligibleReason = "Pacman package manager not detected on current host"
+			offer.IneligibleReason = "Excluded by Official Sources Only policy (community or unverified origin)"
 			offer.Score = 0
 			return
 		}
@@ -59,18 +62,34 @@ func (r *RecommendationEngine) CheckEligibility(offer *PackageOffer) {
 	offer.IneligibleReason = ""
 }
 
-// CalculateScore computes a ranking score (0.0 - 100.0) based on provider trust, sandbox safety, and policy
+// CalculateScore computes a ranking score (0.0 - 100.0) given an offer and the highest known version among peer offers.
 func (r *RecommendationEngine) CalculateScore(offer *PackageOffer) float64 {
+	return r.calculateScoreWithContext(offer, "")
+}
+
+func (r *RecommendationEngine) calculateScoreWithContext(offer *PackageOffer, highestVersion string) float64 {
 	if !offer.IsEligible {
 		return 0.0
 	}
 
 	prov := strings.ToLower(offer.Provider)
-	src := strings.ToLower(offer.Source)
+	src := strings.ToLower(offer.Repository)
+	if src == "" {
+		src = strings.ToLower(offer.Source)
+	}
 
 	var baseScore float64
 
 	switch r.config.Policy {
+	case PolicyOfficialOnly:
+		if offer.Trust.OfficialRepo {
+			baseScore = 95.0
+		} else if offer.Trust.Verified {
+			baseScore = 88.0
+		} else {
+			return 0.0
+		}
+
 	case PolicySandboxPreferred:
 		switch prov {
 		case "flatpak":
@@ -79,34 +98,41 @@ func (r *RecommendationEngine) CalculateScore(offer *PackageOffer) float64 {
 				baseScore += 5.0
 			}
 		case "snap":
-			baseScore = 80.0
-		case "pacman":
+			baseScore = 82.0
+		case "pacman", "apt", "dnf":
 			baseScore = 70.0
 		case "aur":
-			baseScore = 50.0
+			baseScore = 45.0
 		default:
 			baseScore = 40.0
 		}
 
 	case PolicyLatestVersion:
-		switch prov {
-		case "aur":
-			baseScore = 85.0 // AUR often tracks -git or newest releases first
-		case "flatpak":
-			baseScore = 80.0
-		case "pacman":
-			baseScore = 75.0
-		case "snap":
-			baseScore = 70.0
-		default:
-			baseScore = 40.0
+		baseScore = 70.0
+		if highestVersion != "" && offer.Version != "" && !strings.EqualFold(offer.Version, "latest") {
+			cmp := CompareVersions(prov, offer.Version, highestVersion)
+			if cmp == 0 {
+				baseScore = 95.0 // Highest compatible release
+			} else if cmp < 0 {
+				baseScore = 72.0
+			}
+		} else if prov == "aur" {
+			baseScore = 82.0
+		}
+
+	case PolicyMinimalDeps:
+		// Lower extra dependency cost yields a higher score
+		baseScore = 92.0 - float64(offer.DependencyCount*4)
+		if prov == "pacman" && offer.Trust.OfficialRepo {
+			baseScore += 5.0
+		}
+		if baseScore < 30.0 {
+			baseScore = 30.0
 		}
 
 	case PolicyNativePreferred:
-		fallthrough
-	default:
 		switch prov {
-		case "pacman":
+		case "pacman", "apt", "dnf":
 			baseScore = 90.0
 			if src == "core" || src == "extra" {
 				baseScore += 5.0
@@ -119,18 +145,43 @@ func (r *RecommendationEngine) CalculateScore(offer *PackageOffer) float64 {
 		case "snap":
 			baseScore = 70.0
 		case "aur":
-			baseScore = 60.0
+			baseScore = 58.0
 			if strings.HasSuffix(offer.PackageName, "-bin") {
-				baseScore += 5.0 // Precompiled binary preferred over compile-from-source
+				baseScore += 5.0
+			}
+		default:
+			baseScore = 45.0
+		}
+
+	case PolicyRecommended:
+		fallthrough
+	default:
+		// PolicyRecommended weights trust + compatibility + sandbox balance without collapsing them into one property
+		switch prov {
+		case "pacman", "apt", "dnf":
+			baseScore = 88.0
+			if offer.Trust.OfficialRepo {
+				baseScore += 6.0
+			}
+		case "flatpak":
+			baseScore = 85.0
+			if offer.Trust.Verified {
+				baseScore += 4.0
+			}
+		case "snap":
+			baseScore = 74.0
+		case "aur":
+			baseScore = 54.0
+			if strings.HasSuffix(offer.PackageName, "-bin") {
+				baseScore += 4.0
 			}
 		default:
 			baseScore = 45.0
 		}
 	}
 
-	// Installed bonus: If currently installed, retain high score to prevent confusing the user
 	if offer.IsInstalled {
-		baseScore += 5.0
+		baseScore += 4.0
 	}
 
 	if baseScore > 100.0 {
@@ -139,13 +190,16 @@ func (r *RecommendationEngine) CalculateScore(offer *PackageOffer) float64 {
 	return baseScore
 }
 
-// GenerateReason creates a human-readable justification for the offer's score and badge
+// GenerateReason produces a badge and clear rationale covering recommendation, trust, and isolation distinctions.
 func (r *RecommendationEngine) GenerateReason(offer *PackageOffer, isTopRanked bool) (string, string) {
 	prov := strings.ToLower(offer.Provider)
-	src := strings.ToLower(offer.Source)
+	src := strings.ToLower(offer.Repository)
+	if src == "" {
+		src = strings.ToLower(offer.Source)
+	}
 
 	if offer.IsInstalled {
-		return "Installed", fmt.Sprintf("Currently installed on host (%s).", offer.InstalledVersion)
+		return "Installed", fmt.Sprintf("Currently installed via %s (%s). Trust: %s.", strings.ToUpper(prov), offer.InstalledVersion, offer.Trust.TrustLevel)
 	}
 
 	if !offer.IsEligible {
@@ -154,66 +208,103 @@ func (r *RecommendationEngine) GenerateReason(offer *PackageOffer, isTopRanked b
 
 	if isTopRanked {
 		switch prov {
-		case "pacman":
-			return "Recommended", fmt.Sprintf("Official Arch repository package (%s) with native hardware performance and system integration.", src)
+		case "pacman", "apt", "dnf":
+			return "Recommended", fmt.Sprintf("Signed official repository (%s) with native system performance.", src)
 		case "flatpak":
-			return "Recommended", "Verified Flathub container with filesystem sandbox isolation and bundled dependencies."
+			return "Recommended", "Verified Flathub runtime with sandboxed filesystem isolation."
 		case "snap":
-			return "Recommended", "Canonical Snap package with strict sandbox confinement."
+			return "Recommended", "Verified Snap package with strict sandbox confinement."
 		case "aur":
-			return "Recommended", "Community AUR package build configured for Arch Linux."
+			return "Recommended", "Highest matched package for current policy; inspect PKGBUILD before building."
 		default:
-			return "Recommended", "Top eligible package provider for this application."
+			return "Recommended", "Top eligible package offer for current recommendation policy."
 		}
 	}
 
-	// Alternative offers
 	switch prov {
 	case "flatpak":
-		return "Sandboxed", "Flathub application container with isolated user permissions."
-	case "pacman":
-		return "Native", fmt.Sprintf("Native Arch distribution package from [%s].", src)
+		return "Sandboxed", "Verified Flathub container isolated from core host libraries."
+	case "pacman", "apt", "dnf":
+		return "Official", fmt.Sprintf("Signed official distribution package from [%s].", src)
 	case "aur":
 		if strings.HasSuffix(offer.PackageName, "-bin") {
-			return "Community (Bin)", "Community precompiled binary release from the Arch User Repository."
+			return "Community (Bin)", "Community-maintained AUR PKGBUILD repackaging upstream binaries."
 		}
-		return "Community (Source)", "Community source build requiring local compilation via makepkg."
+		return "Community (Source)", "Community AUR build recipe compiled locally via makepkg."
 	case "snap":
-		return "Snap Package", "Strictly confined snap package from Canonical Snapcraft."
+		return "Sandboxed", "Canonical Snap package from Snapcraft store."
 	default:
-		return "Alternative", fmt.Sprintf("Alternative package format provided by %s.", prov)
+		return "Alternative", fmt.Sprintf("Alternative format provided by %s (%s trust).", prov, offer.Trust.TrustLevel)
 	}
 }
 
-// RankAndAnnotate evaluates all offers for an application and sets recommendations
+// RankAndAnnotate scores, sorts, and annotates offers while strictly honoring user preference.
 func (r *RecommendationEngine) RankAndAnnotate(app *UnifiedApplication, userPreferredOfferID string) {
 	if len(app.Offers) == 0 {
 		return
 	}
 
-	// 1. Evaluate eligibility and calculate score for each offer
+	// Ensure Trust fields are always populated even for directly synthesized test offers
 	for i := range app.Offers {
+		if app.Offers[i].Trust.TrustLevel == "" {
+			repo := app.Offers[i].Repository
+			if repo == "" {
+				repo = app.Offers[i].Source
+			}
+			t := EvaluateSourceTrust(app.Offers[i].Provider, repo, app.Offers[i].PackageName)
+			app.Offers[i].Trust = t
+			app.Offers[i].TrustLevel = t.TrustLevel
+			app.Offers[i].SignatureStatus = t.SignatureStatus
+		}
+		if app.Offers[i].Scope == "" {
+			app.Offers[i].Scope = app.Offers[i].InstallScope
+		}
 		r.CheckEligibility(&app.Offers[i])
-		app.Offers[i].Score = r.CalculateScore(&app.Offers[i])
 	}
 
-	// 2. Sort offers: eligible higher score first, ineligible last
+	// Compute highest compatible version across eligible offers for PolicyLatestVersion
+	highestVersion := ""
+	highestProv := ""
+	for _, o := range app.Offers {
+		if !o.IsEligible || o.Version == "" || strings.EqualFold(o.Version, "latest") {
+			continue
+		}
+		if highestVersion == "" {
+			highestVersion = o.Version
+			highestProv = o.Provider
+			continue
+		}
+		// Compare against leading version using offer's provider comparator
+		if CompareVersions(o.Provider, o.Version, highestVersion) > 0 {
+			highestVersion = o.Version
+			highestProv = o.Provider
+		}
+	}
+	_ = highestProv
+
+	for i := range app.Offers {
+		app.Offers[i].Score = r.calculateScoreWithContext(&app.Offers[i], highestVersion)
+	}
+
+	// Deterministic sort: eligible first, higher score first, then stable offer ID
 	sort.SliceStable(app.Offers, func(i, j int) bool {
 		if app.Offers[i].IsEligible != app.Offers[j].IsEligible {
 			return app.Offers[i].IsEligible
 		}
-		return app.Offers[i].Score > app.Offers[j].Score
+		if app.Offers[i].Score != app.Offers[j].Score {
+			return app.Offers[i].Score > app.Offers[j].Score
+		}
+		return app.Offers[i].ID < app.Offers[j].ID
 	})
 
-	// 3. Annotate badges and reasons
 	for i := range app.Offers {
-		isTop := (i == 0 && app.Offers[i].IsEligible)
+		isTop := i == 0 && app.Offers[i].IsEligible
 		badge, reason := r.GenerateReason(&app.Offers[i], isTop)
 		app.Offers[i].RecommendationBadge = badge
 		app.Offers[i].RecommendationReason = reason
 	}
 
-	// 4. Determine default offer (respecting user preference if specified)
+	// Preserve manual user override if still eligible
 	selectedID := ""
 	if userPreferredOfferID != "" {
 		for _, o := range app.Offers {
@@ -224,16 +315,13 @@ func (r *RecommendationEngine) RankAndAnnotate(app *UnifiedApplication, userPref
 		}
 	}
 
-	// Fallback to installed offer if no user override
 	if selectedID == "" && app.IsInstalled && app.InstalledOfferID != "" {
 		selectedID = app.InstalledOfferID
 	}
 
-	// Fallback to highest ranked eligible offer
 	if selectedID == "" && len(app.Offers) > 0 {
 		selectedID = app.Offers[0].ID
 	}
 
 	app.DefaultOfferID = selectedID
 }
-

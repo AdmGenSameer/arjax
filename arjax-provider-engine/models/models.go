@@ -4,13 +4,17 @@ import "time"
 
 // Package represents a software package available from a provider
 type Package struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
-	Size        string `json:"size,omitempty"`
-	Provider    string `json:"provider"`
-	Source      string `json:"source,omitempty"` // "repository", "aur", "vendor", etc.
-	Repo        string `json:"repo,omitempty"`   // for repo-based packages
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Description  string   `json:"description"`
+	Size         string   `json:"size,omitempty"`
+	Provider     string   `json:"provider"`
+	Source       string   `json:"source,omitempty"` // "repository", "aur", "vendor", etc.
+	Repo         string   `json:"repo,omitempty"`   // for repo-based packages
+	Arch         string   `json:"arch,omitempty"`
+	Branch       string   `json:"branch,omitempty"`  // Flatpak branch (e.g. stable, beta)
+	Channel      string   `json:"channel,omitempty"` // Snap channel (e.g. latest/stable)
+	Dependencies []string `json:"dependencies,omitempty"`
 }
 
 // Result represents the outcome of a provider operation

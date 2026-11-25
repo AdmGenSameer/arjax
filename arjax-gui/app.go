@@ -64,21 +64,21 @@ type EnginePackageDTO struct {
 
 // InstalledPackageDTO represents an installed application on the system
 type InstalledPackageDTO struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	DisplayName  string `json:"displayName"`
-	Version      string `json:"version"`
-	Provider     string `json:"provider"`
-	Format       string `json:"format"`
-	Size         string `json:"size"`
-	SizeMB       int    `json:"sizeMB"`
-	HasUpdate    bool   `json:"hasUpdate"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	DisplayName   string `json:"displayName"`
+	Version       string `json:"version"`
+	Provider      string `json:"provider"`
+	Format        string `json:"format"`
+	Size          string `json:"size"`
+	SizeMB        int    `json:"sizeMB"`
+	HasUpdate     bool   `json:"hasUpdate"`
 	UpdateVersion string `json:"updateVersion,omitempty"`
-	Category     string `json:"category"`
-	Icon         string `json:"icon"`
-	LastActivity string `json:"lastActivity"`
-	IsNative     bool   `json:"isNative"`
-	IsSharedCore bool   `json:"isSharedCore"`
+	Category      string `json:"category"`
+	Icon          string `json:"icon"`
+	LastActivity  string `json:"lastActivity"`
+	IsNative      bool   `json:"isNative"`
+	IsSharedCore  bool   `json:"isSharedCore"`
 }
 
 // UpdateItemDTO represents a pending package update
@@ -166,11 +166,20 @@ func (a *App) getInstalledMap(ctx context.Context) map[string]string {
 	res := make(map[string]string)
 	pkgs := a.GetInstalledPackages()
 	for _, p := range pkgs {
+		prov := strings.ToLower(strings.TrimSpace(p.Provider))
 		if p.ID != "" {
-			res[strings.ToLower(p.ID)] = p.Version
+			idLow := strings.ToLower(p.ID)
+			res[idLow] = p.Version
+			if prov != "" {
+				res[prov+":"+idLow] = p.Version
+			}
 		}
 		if p.Name != "" {
-			res[strings.ToLower(p.Name)] = p.Version
+			nameLow := strings.ToLower(p.Name)
+			res[nameLow] = p.Version
+			if prov != "" {
+				res[prov+":"+nameLow] = p.Version
+			}
 		}
 	}
 	return res
@@ -873,26 +882,49 @@ func (a *App) SearchUnifiedSync(query string) []catalog.UnifiedApplication {
 	return res
 }
 
-// SearchUnifiedProgressive kicks off a progressive streaming search emitting "search:batch" and "search:done" Wails events
+// SearchUnifiedProgressive kicks off a progressive streaming search emitting expressive Wails events:
+// "search:started", "search:provider-status", "search:batch", "search:provider-error", "search:done", "search:cancelled"
 func (a *App) SearchUnifiedProgressive(query string, searchID string) {
 	if a.catalogMgr == nil || a.ctx == nil {
 		return
 	}
 
 	go func() {
-		a.catalogMgr.ProgressiveSearch().StreamSearch(
+		a.catalogMgr.ProgressiveSearch().StreamSearchWithCallbacks(
 			context.Background(),
 			searchID,
 			query,
-			func(batch catalog.ProgressiveSearchBatchDTO) {
-				if a.ctx != nil {
-					runtime.EventsEmit(a.ctx, "search:batch", batch)
-				}
-			},
-			func(done catalog.ProgressiveSearchDoneDTO) {
-				if a.ctx != nil {
-					runtime.EventsEmit(a.ctx, "search:done", done)
-				}
+			catalog.ProgressiveSearchCallbacks{
+				OnStarted: func(ev catalog.SearchStartedDTO) {
+					if a.ctx != nil {
+						runtime.EventsEmit(a.ctx, "search:started", ev)
+					}
+				},
+				OnProviderStatus: func(ev catalog.SearchProviderStatusDTO) {
+					if a.ctx != nil {
+						runtime.EventsEmit(a.ctx, "search:provider-status", ev)
+					}
+				},
+				OnBatch: func(batch catalog.ProgressiveSearchBatchDTO) {
+					if a.ctx != nil {
+						runtime.EventsEmit(a.ctx, "search:batch", batch)
+					}
+				},
+				OnProviderError: func(ev catalog.SearchProviderStatusDTO) {
+					if a.ctx != nil {
+						runtime.EventsEmit(a.ctx, "search:provider-error", ev)
+					}
+				},
+				OnCancelled: func(ev catalog.ProgressiveSearchDoneDTO) {
+					if a.ctx != nil {
+						runtime.EventsEmit(a.ctx, "search:cancelled", ev)
+					}
+				},
+				OnDone: func(done catalog.ProgressiveSearchDoneDTO) {
+					if a.ctx != nil {
+						runtime.EventsEmit(a.ctx, "search:done", done)
+					}
+				},
 			},
 		)
 	}()
@@ -903,4 +935,97 @@ func (a *App) CancelProgressiveSearch(searchID string) {
 	if a.catalogMgr != nil {
 		a.catalogMgr.ProgressiveSearch().CancelSearch(searchID)
 	}
+}
+
+// InstallOffer resolves an authoritative OfferID in the Go backend and executes it via TransactionManager
+func (a *App) InstallOffer(offerID string) catalog.TransactionDTO {
+	if a.catalogMgr == nil {
+		return catalog.TransactionDTO{State: catalog.TxFailed, ErrorCode: "engine_unavailable", ErrorMessage: "CatalogManager not initialized"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Timeout())
+	defer cancel()
+
+	tx, err := a.catalogMgr.InstallOffer(ctx, offerID, func(update catalog.TransactionDTO) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "transaction:update", update)
+			// Backward-compatible legacy install-progress bridge
+			runtime.EventsEmit(a.ctx, "install-progress", InstallProgressDTO{
+				PackageName: update.PackageName,
+				Provider:    update.Provider,
+				Progress:    update.Progress,
+				Stage:       update.Message,
+				Logs:        update.Logs,
+				Completed:   update.State == catalog.TxCompleted || update.State == catalog.TxFailed || update.State == catalog.TxCancelled,
+				Success:     update.State == catalog.TxCompleted,
+				Error:       update.ErrorMessage,
+			})
+		}
+	})
+	if err != nil && tx.ID == "" {
+		tx.State = catalog.TxFailed
+		tx.ErrorMessage = err.Error()
+	}
+	return tx
+}
+
+// RemoveOffer resolves an authoritative OfferID in the Go backend and uninstalls that specific source
+func (a *App) RemoveOffer(offerID string) catalog.TransactionDTO {
+	if a.catalogMgr == nil {
+		return catalog.TransactionDTO{State: catalog.TxFailed, ErrorCode: "engine_unavailable", ErrorMessage: "CatalogManager not initialized"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Timeout())
+	defer cancel()
+
+	tx, err := a.catalogMgr.RemoveOffer(ctx, offerID, func(update catalog.TransactionDTO) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "transaction:update", update)
+		}
+	})
+	if err != nil && tx.ID == "" {
+		tx.State = catalog.TxFailed
+		tx.ErrorMessage = err.Error()
+	}
+	return tx
+}
+
+// CancelTransaction requests safe cancellation of an active transaction
+func (a *App) CancelTransaction(txID string) string {
+	if a.catalogMgr == nil {
+		return "CatalogManager not initialized"
+	}
+	if err := a.catalogMgr.Transactions().CancelTransaction(txID); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// GetTransactions returns transaction history from the shared engine
+func (a *App) GetTransactions() []catalog.TransactionDTO {
+	if a.catalogMgr == nil {
+		return []catalog.TransactionDTO{}
+	}
+	return a.catalogMgr.Transactions().ListTransactions()
+}
+
+// GetProviderCapabilities returns explicit capability & health status for all tracked package ecosystems
+func (a *App) GetProviderCapabilities() []providers.ProviderCapability {
+	if a.catalogMgr == nil {
+		return providers.GetCapabilitiesOrdered(providers.DefaultCapabilityMatrix())
+	}
+	return a.catalogMgr.Capabilities()
+}
+
+// SetRecommendationPolicy sets the active ranking policy ("recommended", "official_only", "native_preferred", "sandbox_preferred", "latest_version", "minimal_deps")
+func (a *App) SetRecommendationPolicy(policy string) {
+	if a.catalogMgr != nil {
+		a.catalogMgr.SetPolicy(catalog.RecommendationPolicy(policy))
+	}
+}
+
+// GetRecommendationPolicy returns the currently active recommendation policy
+func (a *App) GetRecommendationPolicy() string {
+	if a.catalogMgr == nil {
+		return string(catalog.PolicyRecommended)
+	}
+	return string(a.catalogMgr.GetPolicy())
 }

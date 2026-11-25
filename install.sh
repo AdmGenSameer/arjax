@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -euEo pipefail
 
 APP_NAME="arjax"
 REPO_ARCHIVE_URL="https://github.com/AdmGenSameer/archpkg-helper/archive/refs/heads/main.zip"
@@ -14,6 +14,12 @@ UNINSTALL_MODE=false
 PURGE_CONFIG=false
 INSTALL_DEPS=false
 YES_TO_ALL=false
+LOG_FILE="${TMPDIR:-/tmp}/arjax-install-${UID:-$(id -u 2>/dev/null || echo 0)}.log"
+touch "$LOG_FILE" 2>/dev/null || LOG_FILE="$(mktemp /tmp/arjax-install-XXXXXX.log 2>/dev/null || echo "/tmp/arjax-install.log")"
+INSTALL_SUCCESS=false
+ERROR_REPORTED=false
+FAILED_LINE=""
+FAILED_CMD=""
 
 for arg in "$@"; do
     case "$arg" in
@@ -30,16 +36,72 @@ for arg in "$@"; do
             YES_TO_ALL=true
             INSTALL_DEPS=true
             ;;
+        --log-file=*)
+            LOG_FILE="${arg#*=}"
+            ;;
     esac
 done
 
-# Tiny logging helpers keep the installer output readable.
+# Initialize log file header
+{
+    echo "================================================================="
+    echo "Arjax Installation Log"
+    echo "Started at: $(date)"
+    echo "System:     $(uname -s -m -r 2>/dev/null || uname -a)"
+    echo "User:       $(whoami 2>/dev/null || id -un 2>/dev/null || echo "uid $UID")"
+    echo "Arguments:  ${*:-none}"
+    echo "================================================================="
+} >> "$LOG_FILE" 2>/dev/null || true
+
+trap 'FAILED_LINE="$LINENO"; FAILED_CMD="$BASH_COMMAND"' ERR
+
+on_exit() {
+    local exit_code="$1"
+    if [ "$INSTALL_SUCCESS" = true ] || [ "$exit_code" -eq 0 ] || [ "$UNINSTALL_MODE" = true ]; then
+        return
+    fi
+    if [ "$ERROR_REPORTED" = true ]; then
+        return
+    fi
+    ERROR_REPORTED=true
+
+    echo "" >&2
+    echo "=================================================================" >&2
+    echo "❌ Arjax Installation Failed!" >&2
+    echo "=================================================================" >&2
+    echo "Failure details:" >&2
+    echo "  • Exit code:    $exit_code" >&2
+    if [ -n "$FAILED_LINE" ]; then
+        echo "  • Failed line:  Line $FAILED_LINE" >&2
+        echo "  • Command:      $FAILED_CMD" >&2
+    fi
+    echo "  • Log file:     $LOG_FILE" >&2
+    echo "=================================================================" >&2
+    if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
+        echo "Recent installer log output (last 15 lines):" >&2
+        echo "-----------------------------------------------------------------" >&2
+        tail -n 15 "$LOG_FILE" | sed 's/^/  /' >&2
+        echo "-----------------------------------------------------------------" >&2
+    fi
+    echo "For assistance or debugging, inspect the full log at:" >&2
+    echo "  $LOG_FILE" >&2
+    echo "=================================================================" >&2
+}
+trap 'on_exit "$?"' EXIT
+
+# Tiny logging helpers keep the installer output readable and persisted to disk.
 log() {
     echo "[*] $*"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [*] $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+log_error() {
+    echo "[x] $*" >&2
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 die() {
-    echo "[x] $*"
+    log_error "$*"
     exit 1
 }
 
@@ -272,12 +334,16 @@ request_dep_install() {
             wait "$action_pid"
             local exit_code=$?
 
+            if [ -s "$log_file" ]; then
+                cat "$log_file" >> "$LOG_FILE" 2>/dev/null || true
+            fi
+
             if [ "$exit_code" -eq 0 ]; then
                 log "$dep_name installed successfully"
                 rm -f "$log_file"
                 return 0
             else
-                log "Failed to install $dep_name automatically"
+                log_error "Failed to install $dep_name automatically"
                 if [ -s "$log_file" ]; then
                     echo "Installation output:"
                     tail -n 10 "$log_file" | sed 's/^/    /'
@@ -409,6 +475,10 @@ ensure_go() {
             show_spinner "$action_pid" "Installing Go compiler..."
             wait "$action_pid"
             local exit_code=$?
+            if [ -s "$log_file" ]; then
+                cat "$log_file" >> "$LOG_FILE" 2>/dev/null || true
+            fi
+
             if [ "$exit_code" -eq 0 ] && command -v go >/dev/null 2>&1; then
                 log "Go compiler installed successfully ($(go version | awk '{print $3}'))"
                 rm -f "$log_file"
@@ -493,9 +563,9 @@ create_venv() {
     mkdir -p "$INSTALL_ROOT"
     if [ ! -x "$VENV_DIR/bin/python" ]; then
         log "Creating virtual environment in $VENV_DIR"
-        if ! python3 -m venv "$VENV_DIR" 2>/dev/null; then
+        if ! python3 -m venv "$VENV_DIR" >> "$LOG_FILE" 2>&1; then
             log "Standard venv creation failed; attempting minimal venv creation..."
-            python3 -m venv --without-pip "$VENV_DIR" || die "Could not create virtual environment in $VENV_DIR."
+            python3 -m venv --without-pip "$VENV_DIR" >> "$LOG_FILE" 2>&1 || die "Could not create virtual environment in $VENV_DIR."
         fi
     fi
 
@@ -506,15 +576,15 @@ create_venv() {
     # Ensure pip is available inside the virtual environment
     if [ ! -x "$VENV_DIR/bin/pip" ]; then
         log "Bootstrapping pip inside the virtual environment..."
-        "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+        "$VENV_DIR/bin/python" -m ensurepip --upgrade >> "$LOG_FILE" 2>&1 || true
     fi
 
     if [ ! -x "$VENV_DIR/bin/pip" ]; then
         log "Bootstrapping pip using standalone get-pip..."
         if command -v curl >/dev/null 2>&1; then
-            curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - >/dev/null 2>&1 || true
+            curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - >> "$LOG_FILE" 2>&1 || true
         elif command -v wget >/dev/null 2>&1; then
-            wget -qO- https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - >/dev/null 2>&1 || true
+            wget -qO- https://bootstrap.pypa.io/get-pip.py | "$VENV_DIR/bin/python" - >> "$LOG_FILE" 2>&1 || true
         fi
     fi
 
@@ -531,22 +601,22 @@ install_package() {
         die "pip is unavailable inside the virtual environment."
     fi
 
-    log "Upgrading packaging tools..."
-    "$pip_bin" install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
+    log "Upgrading packaging tools in virtual environment..."
+    "$pip_bin" install --upgrade pip setuptools wheel >> "$LOG_FILE" 2>&1 || true
 
     log "Installing Arjax from $SOURCE_SPEC..."
-    if ! "$pip_bin" install --upgrade "$SOURCE_SPEC"; then
+    if ! "$pip_bin" install --upgrade "$SOURCE_SPEC" >> "$LOG_FILE" 2>&1; then
         local fallback_url="https://github.com/AdmGenSameer/arjax/archive/refs/heads/main.zip"
         if [ "$SOURCE_SPEC" != "$fallback_url" ]; then
             log "Retrying installation with fallback archive URL..."
-            "$pip_bin" install --upgrade "$fallback_url"
+            "$pip_bin" install --upgrade "$fallback_url" >> "$LOG_FILE" 2>&1 || die "Failed to install Arjax from $fallback_url."
         else
             die "Failed to install Arjax from $SOURCE_SPEC."
         fi
     fi
 
     log "Installing GUI dependency (PyQt5)..."
-    "$pip_bin" install --upgrade PyQt5 >/dev/null 2>&1 || log "Notice: PyQt5 could not be installed automatically. Arjax CLI and TUI are fully functional; run 'arjax gui-install' to install GUI support later."
+    "$pip_bin" install --upgrade PyQt5 >> "$LOG_FILE" 2>&1 || log "Notice: PyQt5 could not be installed automatically. Arjax CLI and TUI are fully functional; run 'arjax gui-install' to install GUI support later."
 }
 
 build_go_engine() {
@@ -562,12 +632,12 @@ build_go_engine() {
         tmp_engine="$(mktemp -d /tmp/arjax-engine-XXXXXX 2>/dev/null || mktemp -d)"
         local zip_file="$tmp_engine/repo.zip"
         if command -v curl >/dev/null 2>&1; then
-            curl -fsSL "$REPO_ARCHIVE_URL" -o "$zip_file" 2>/dev/null || true
+            curl -fsSL "$REPO_ARCHIVE_URL" -o "$zip_file" >> "$LOG_FILE" 2>&1 || true
         elif command -v wget >/dev/null 2>&1; then
-            wget -qO "$zip_file" "$REPO_ARCHIVE_URL" 2>/dev/null || true
+            wget -qO "$zip_file" "$REPO_ARCHIVE_URL" >> "$LOG_FILE" 2>&1 || true
         fi
         if [ -f "$zip_file" ] && command -v python3 >/dev/null 2>&1; then
-            python3 -c "import zipfile; zipfile.ZipFile('$zip_file').extractall('$tmp_engine')" 2>/dev/null || true
+            python3 -c "import zipfile; zipfile.ZipFile('$zip_file').extractall('$tmp_engine')" >> "$LOG_FILE" 2>&1 || true
             local extracted_dir
             extracted_dir="$(find "$tmp_engine" -maxdepth 2 -type d -name "arjax-provider-engine" 2>/dev/null | head -n 1)"
             if [ -n "$extracted_dir" ] && [ -d "$extracted_dir" ]; then
@@ -580,7 +650,7 @@ build_go_engine() {
         log "Compiling Arjax Go Provider Engine..."
         (
             cd "$engine_dir"
-            go build -o "$BIN_DIR/arjax-provider" main.go || true
+            go build -o "$BIN_DIR/arjax-provider" main.go >> "$LOG_FILE" 2>&1 || true
         )
         if [ -x "$BIN_DIR/arjax-provider" ]; then
             log "Arjax Go Provider Engine successfully compiled and installed to $BIN_DIR/arjax-provider"
@@ -835,7 +905,9 @@ main() {
     install_man_page
     configure_arch_profile "$(detect_distro_family)"
 
+    INSTALL_SUCCESS=true
     log "Arjax installation complete!"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Arjax installation completed successfully." >> "$LOG_FILE" 2>/dev/null || true
     echo ""
     echo "Quick start:"
     echo "    arjax               # Launch interactive TUI (Default)"
@@ -851,6 +923,8 @@ main() {
     else
         echo "CLI-only environment detected, so no application menu entry was created."
     fi
+    echo ""
+    echo "Full installation log is saved at: $LOG_FILE"
 }
 
 main "$@"

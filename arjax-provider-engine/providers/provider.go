@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +54,65 @@ func (pm *ProviderManager) GetSupportedProviderNames() []string {
 		names = append(names, p.Name())
 	}
 	return names
+}
+
+// GetCapabilityMatrix returns explicit capability & host health metadata across tracked ecosystems
+func (pm *ProviderManager) GetCapabilityMatrix() map[string]ProviderCapability {
+	matrix := DefaultCapabilityMatrix()
+	// Cross-check dynamically registered mock/custom providers so test harnesses reflect availability
+	for _, p := range pm.providers {
+		n := strings.ToLower(p.Name())
+		if n == "repository" {
+			n = "pacman"
+		}
+		if existing, ok := matrix[n]; ok {
+			existing.AvailableOnHost = p.IsSupported()
+			matrix[n] = existing
+		} else {
+			matrix[n] = ProviderCapability{
+				Provider:           n,
+				DisplayName:        strings.ToUpper(n),
+				Search:             SupportFull,
+				Install:            SupportFull,
+				Remove:             SupportFull,
+				Update:             SupportPartial,
+				InstalledDetection: SupportPartial,
+				AvailableOnHost:    p.IsSupported(),
+				StatusNote:         "Registered runtime provider adapter",
+			}
+		}
+	}
+	return matrix
+}
+
+// GetCapabilities returns ordered list of tracked provider capabilities
+func (pm *ProviderManager) GetCapabilities() []ProviderCapability {
+	return GetCapabilitiesOrdered(pm.GetCapabilityMatrix())
+}
+
+// SearchProvider queries a single named provider without invoking unrelated providers
+func (pm *ProviderManager) SearchProvider(ctx context.Context, providerName, query string) ([]models.Package, error) {
+	for _, p := range pm.providers {
+		if strings.EqualFold(p.Name(), providerName) {
+			return p.Search(ctx, query)
+		}
+	}
+	return nil, fmt.Errorf("provider %q not registered or unsupported", providerName)
+}
+
+// GetProvider returns a registered Provider by name (handling repository <-> system PM alias)
+func (pm *ProviderManager) GetProvider(name string) (Provider, bool) {
+	norm := strings.ToLower(strings.TrimSpace(name))
+	for _, p := range pm.providers {
+		pn := strings.ToLower(p.Name())
+		if pn == norm {
+			return p, true
+		}
+		if (norm == "pacman" || norm == "apt" || norm == "dnf" || norm == "zypper" || norm == "paru" || norm == "deb" || norm == "rpm") && pn == "repository" {
+			return p, true
+		}
+	}
+	return nil, false
 }
 
 // SearchAll searches concurrently across all supported providers
@@ -170,16 +230,44 @@ func (pm *ProviderManager) Remove(ctx context.Context, pkg models.Package) (mode
 	}, fmt.Errorf("remove failed for %s", pkg.Name)
 }
 
-// Info retrieves package information
+// Info retrieves package information from the first matching provider
 func (pm *ProviderManager) Info(ctx context.Context, pkgName string) (models.PackageInfo, error) {
 	for _, p := range pm.providers {
 		info, err := p.Info(ctx, pkgName)
 		if err == nil && info.Name != "" {
-			info.Provider = p.Name()
+			if info.Provider == "" {
+				info.Provider = p.Name()
+			}
 			return info, nil
 		}
 	}
 	return models.PackageInfo{}, fmt.Errorf("package info not found for %s", pkgName)
+}
+
+// InfoAll queries all supported providers concurrently and returns every matching PackageInfo
+func (pm *ProviderManager) InfoAll(ctx context.Context, pkgName string) []models.PackageInfo {
+	var (
+		wg  sync.WaitGroup
+		mu  sync.Mutex
+		out []models.PackageInfo
+	)
+	for _, p := range pm.providers {
+		wg.Add(1)
+		go func(prov Provider) {
+			defer wg.Done()
+			info, err := prov.Info(ctx, pkgName)
+			if err == nil && info.Name != "" {
+				if info.Provider == "" {
+					info.Provider = prov.Name()
+				}
+				mu.Lock()
+				out = append(out, info)
+				mu.Unlock()
+			}
+		}(p)
+	}
+	wg.Wait()
+	return out
 }
 
 // BatchInstall handles concurrent or bulk package installations

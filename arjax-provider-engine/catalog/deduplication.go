@@ -2,61 +2,95 @@ package catalog
 
 import (
 	"fmt"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/appstream"
-	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/icons"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog/identity"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
 )
 
 // Deduplicator groups heterogeneous package offers under canonical AppStream identities
+// using the dedicated catalog/identity resolver rather than icon aliases.
 type Deduplicator struct {
-	mu            sync.RWMutex
-	aliasRegistry *icons.AliasRegistry
+	mu               sync.RWMutex
+	identityResolver *identity.Resolver
 }
 
-// NewDeduplicator constructs a deduplicator using the universal alias registry
+// NewDeduplicator constructs a deduplicator backed by catalog/identity.
 func NewDeduplicator() *Deduplicator {
 	return &Deduplicator{
-		aliasRegistry: icons.GetAliasRegistry(),
+		identityResolver: identity.NewResolver(identity.GetDefaultRegistry()),
 	}
 }
 
-// CanonicalizeID maps a package name, binary name, or AppStream ID to its canonical reverse-DNS identity
+// IdentityResolver returns the underlying canonical identity resolver.
+func (d *Deduplicator) IdentityResolver() *identity.Resolver {
+	return d.identityResolver
+}
+
+// CanonicalizeID maps a package name, binary name, or AppStream ID to its canonical identity.
 func (d *Deduplicator) CanonicalizeID(input string) string {
-	clean := strings.ToLower(strings.TrimSpace(input))
-	if clean == "" {
-		return ""
-	}
-
-	// 1. Resolve from alias registry
-	if canon := d.aliasRegistry.ResolveCanonical(clean); canon != "" {
-		return canon
-	}
-
-	// 2. Reverse alias lookup: check known leaf names
-	parts := strings.Split(clean, ".")
-	if len(parts) > 1 {
-		// e.g. org.mozilla.firefox or com.valvesoftware.Steam
-		return clean
-	}
-
-	return clean
+	return d.identityResolver.ResolveCanonical(input)
 }
 
-// BuildOfferID generates a stable, deterministic identifier for a package offer
-func BuildOfferID(provider, source, packageName, version string) string {
-	prov := strings.ToLower(strings.TrimSpace(provider))
-	src := strings.ToLower(strings.TrimSpace(source))
-	if src == "" {
-		src = "default"
+// ResolveIdentity returns full confidence assessment for an identifier.
+func (d *Deduplicator) ResolveIdentity(input, provider string) identity.ResolutionResult {
+	return d.identityResolver.Resolve(input, provider)
+}
+
+// BuildOfferIdentity generates a collision-free, deterministic offer identifier across
+// provider, repository, package name, architecture, branch, and channel.
+func BuildOfferIdentity(provider, repo, packageName, arch, branch, channel string) string {
+	prov := normalizeProviderName(provider, repo)
+	r := strings.ToLower(strings.TrimSpace(repo))
+	if r == "" {
+		r = "default"
 	}
 	pkg := strings.ToLower(strings.TrimSpace(packageName))
-	return fmt.Sprintf("%s:%s:%s", prov, src, pkg)
+	a := strings.ToLower(strings.TrimSpace(arch))
+	b := strings.ToLower(strings.TrimSpace(branch))
+	c := strings.ToLower(strings.TrimSpace(channel))
+
+	parts := []string{prov, r, pkg}
+	if a != "" {
+		parts = append(parts, "arch="+a)
+	}
+	if b != "" {
+		parts = append(parts, "branch="+b)
+	}
+	if c != "" {
+		parts = append(parts, "channel="+c)
+	}
+	return strings.Join(parts, ":")
 }
 
-// DetermineScope determines the security/installation scope of a provider
+// BuildOfferID keeps backwards-compatible OfferID construction when arch/branch/channel are defaults.
+func BuildOfferID(provider, source, packageName, _ string) string {
+	return BuildOfferIdentity(provider, source, packageName, "", "", "")
+}
+
+func normalizeProviderName(provider, repo string) string {
+	prov := strings.ToLower(strings.TrimSpace(provider))
+	r := strings.ToLower(strings.TrimSpace(repo))
+	if prov == "repository" {
+		if r == "aur" {
+			return "aur"
+		}
+		return "pacman"
+	}
+	if prov == "" {
+		if r == "aur" {
+			return "aur"
+		}
+		return "pacman"
+	}
+	return prov
+}
+
+// DetermineScope determines the security/isolation scope separately from trust and recommendation.
 func DetermineScope(provider string) InstallScope {
 	switch strings.ToLower(provider) {
 	case "flatpak":
@@ -70,7 +104,7 @@ func DetermineScope(provider string) InstallScope {
 	}
 }
 
-// DeterminePermissions returns standard sandbox permissions based on provider
+// DeterminePermissions returns standard sandbox/host permissions based on provider and app class.
 func DeterminePermissions(provider, pkgName string) []string {
 	prov := strings.ToLower(provider)
 	pkg := strings.ToLower(pkgName)
@@ -89,51 +123,86 @@ func DeterminePermissions(provider, pkgName string) []string {
 		return perms
 	}
 
-	// Native system packages have unrestricted host system access
 	return []string{"system-native", "host-filesystem", "hardware-direct"}
 }
 
-// FormatInstallCommand generates an accurate preview command for terminal transparency
-func FormatInstallCommand(provider, packageName string) string {
+// FormatCommandPreview generates a non-executable informational CLI reference string.
+func FormatCommandPreview(provider, repo, packageName, branch, channel string) string {
 	switch strings.ToLower(provider) {
 	case "pacman":
 		return fmt.Sprintf("sudo pacman -S %s", packageName)
 	case "aur":
 		return fmt.Sprintf("paru -S %s", packageName)
 	case "flatpak":
-		return fmt.Sprintf("flatpak install flathub %s", packageName)
+		remote := repo
+		if remote == "" {
+			remote = "flathub"
+		}
+		if branch != "" && branch != "stable" {
+			return fmt.Sprintf("flatpak install %s %s//%s", remote, packageName, branch)
+		}
+		return fmt.Sprintf("flatpak install %s %s", remote, packageName)
 	case "snap":
+		if channel != "" {
+			return fmt.Sprintf("sudo snap install %s --channel=%s", packageName, channel)
+		}
 		return fmt.Sprintf("sudo snap install %s", packageName)
+	case "deb", "apt":
+		return fmt.Sprintf("sudo apt install %s", packageName)
+	case "rpm", "dnf":
+		return fmt.Sprintf("sudo dnf install %s", packageName)
 	default:
 		return fmt.Sprintf("arjax install %s --provider %s", packageName, provider)
 	}
 }
 
-// ConvertPackageToOffer transforms a raw provider Package into a normalized PackageOffer
+// ConvertPackageToOffer transforms a raw provider Package into a complete PackageOffer
+// with trust, scope, architecture, branch/channel, and dependency counts.
 func (d *Deduplicator) ConvertPackageToOffer(p models.Package, isInstalled bool, installedVer string) PackageOffer {
-	prov := p.Provider
-	if prov == "" {
-		prov = "pacman"
+	repo := p.Repo
+	if repo == "" {
+		repo = p.Source
 	}
-	src := p.Source
-	if src == "" {
-		src = p.Repo
+	prov := normalizeProviderName(p.Provider, repo)
+	if repo == "" || repo == "repository" {
+		if prov == "aur" {
+			repo = "aur"
+		} else if prov == "flatpak" {
+			repo = "flathub"
+		} else if prov == "snap" {
+			repo = "snapcraft"
+		} else {
+			repo = prov
+		}
 	}
-	if src == "" {
-		src = prov
+
+	arch := strings.TrimSpace(p.Arch)
+	if arch == "" {
+		arch = hostDefaultArch()
+	}
+
+	branch := strings.TrimSpace(p.Branch)
+	if branch == "" && prov == "flatpak" {
+		branch = "stable"
+	}
+	channel := strings.TrimSpace(p.Channel)
+	if channel == "" && prov == "snap" {
+		channel = "latest/stable"
 	}
 
 	scope := DetermineScope(prov)
 	perms := DeterminePermissions(prov, p.Name)
-	offerID := BuildOfferID(prov, src, p.Name, p.Version)
+	offerID := BuildOfferIdentity(prov, repo, p.Name, p.Arch, p.Branch, p.Channel)
+	trust := EvaluateSourceTrust(prov, repo, p.Name)
 
 	dSize := p.Size
 	if dSize == "" {
-		if prov == "flatpak" {
+		switch prov {
+		case "flatpak":
 			dSize = "~85 MB"
-		} else if prov == "aur" {
+		case "aur":
 			dSize = "Source PKGBUILD"
-		} else {
+		default:
 			dSize = "~45 MB"
 		}
 	}
@@ -143,102 +212,127 @@ func (d *Deduplicator) ConvertPackageToOffer(p models.Package, isInstalled bool,
 		iSize = "~240 MB"
 	}
 
-	canonID := d.CanonicalizeID(p.Name)
+	depCount := len(p.Dependencies)
+	if depCount == 0 && prov == "flatpak" {
+		// Sandboxed Flatpak commonly requires runtime dependencies if not yet shared
+		depCount = 1
+	}
+
+	res := d.ResolveIdentity(p.Name, prov)
 
 	return PackageOffer{
 		ID:               offerID,
-		AppID:            canonID,
+		AppID:            res.CanonicalID,
 		PackageName:      p.Name,
 		Provider:         prov,
-		Source:           src,
+		Repository:       repo,
+		Source:           repo,
+		Architecture:     arch,
 		Version:          p.Version,
+		Branch:           branch,
+		Channel:          channel,
 		DownloadSize:     dSize,
 		InstalledSize:    iSize,
 		InstallScope:     scope,
+		Scope:            scope,
 		Permissions:      perms,
+		DependencyCount:  depCount,
+		Dependencies:     p.Dependencies,
 		IsInstalled:      isInstalled,
 		InstalledVersion: installedVer,
 		IsEligible:       true,
-		InstallCmd:       FormatInstallCommand(prov, p.Name),
+		TrustLevel:       trust.TrustLevel,
+		SignatureStatus:  trust.SignatureStatus,
+		Trust:            trust,
+		CommandPreview:   FormatCommandPreview(prov, repo, p.Name, branch, channel),
 	}
 }
 
-// GroupAndDeduplicate processes a collection of packages and AppStream metadata into unified applications
+func hostDefaultArch() string {
+	if runtime.GOARCH == "arm64" {
+		return "aarch64"
+	}
+	return "x86_64"
+}
+
+// GroupAndDeduplicate groups offers under canonical AppStream IDs while refusing
+// uncertain fuzzy merges. Duplicate mirror entries are eliminated cleanly.
 func (d *Deduplicator) GroupAndDeduplicate(
 	pkgs []models.Package,
 	crawlerMap map[string]*appstream.AppstreamMetadata,
-	installedMap map[string]string, // packageName or AppID -> installed version
+	installedMap map[string]string,
 ) []UnifiedApplication {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Map of canonical AppID -> UnifiedApplication
 	appMap := make(map[string]*UnifiedApplication)
-	// Map of offer ID -> bool (to prevent duplicate offers within the same app)
 	seenOffers := make(map[string]bool)
 
-	// 1. First, seed applications with crawler metadata (rich desktop apps)
+	// 1. Seed rich desktop metadata from AppStream/Flathub crawler (high confidence)
 	if crawlerMap != nil {
 		for id, meta := range crawlerMap {
 			if meta == nil {
 				continue
 			}
-			canonID := d.CanonicalizeID(id)
+			d.identityResolver.RegisterRuntimeAppStream(id, meta.Name)
+			res := d.identityResolver.Resolve(id, "flatpak")
+			canonID := res.CanonicalID
 			if canonID == "" {
 				canonID = id
 			}
 
 			app := &UnifiedApplication{
-				AppID:       canonID,
-				Name:        meta.Name,
-				Summary:     meta.Summary,
-				Description: meta.Description,
-				Developer:   meta.Developer,
-				Homepage:    meta.Homepage,
-				License:     meta.License,
-				IconURL:     meta.Icon,
-				Categories:  meta.Categories,
-				Screenshots: meta.Screenshots,
-				Releases:    meta.Releases,
-				Aliases:     []string{meta.ID, meta.FlathubID, strings.ToLower(meta.Name)},
-				Offers:      []PackageOffer{},
-				Rating:      4.8,
-				Reviews:     "4,280",
-				Badge:       "Flathub Verified",
+				AppID:              canonID,
+				Name:               meta.Name,
+				Summary:            meta.Summary,
+				Description:        meta.Description,
+				Developer:          meta.Developer,
+				Homepage:           meta.Homepage,
+				License:            meta.License,
+				IconURL:            meta.Icon,
+				Categories:         meta.Categories,
+				Screenshots:        meta.Screenshots,
+				Releases:           meta.Releases,
+				Aliases:            []string{meta.ID, meta.FlathubID, strings.ToLower(meta.Name)},
+				IdentityConfidence: res.Confidence,
+				Offers:             []PackageOffer{},
+				Rating:             4.8,
+				Reviews:            "4,280",
+				Badge:              "Flathub Verified",
 			}
 
-			// Add Flatpak offer if metadata has FlathubID or ID
 			flatpakPkg := meta.FlathubID
 			if flatpakPkg == "" {
 				flatpakPkg = meta.ID
 			}
 			if flatpakPkg != "" {
-				offerID := BuildOfferID("flatpak", "flathub", flatpakPkg, "latest")
-				isInst := false
-				instVer := ""
-				if ver, ok := installedMap[flatpakPkg]; ok {
-					isInst = true
-					instVer = ver
-				} else if ver, ok := installedMap[canonID]; ok {
-					isInst = true
-					instVer = ver
-				}
+				offerID := BuildOfferIdentity("flatpak", "flathub", flatpakPkg, "", "", "")
+				isInst, instVer := matchInstalled(installedMap, flatpakPkg, canonID, "flatpak")
+				trust := EvaluateSourceTrust("flatpak", "flathub", flatpakPkg)
 
 				offer := PackageOffer{
 					ID:               offerID,
 					AppID:            canonID,
 					PackageName:      flatpakPkg,
 					Provider:         "flatpak",
+					Repository:       "flathub",
 					Source:           "flathub",
+					Architecture:     hostDefaultArch(),
 					Version:          "Latest",
+					Branch:           "stable",
 					DownloadSize:     "~85 MB",
 					InstalledSize:    "~240 MB",
 					InstallScope:     ScopeSandboxed,
+					Scope:            ScopeSandboxed,
 					Permissions:      DeterminePermissions("flatpak", flatpakPkg),
+					DependencyCount:  1,
 					IsInstalled:      isInst,
 					InstalledVersion: instVer,
 					IsEligible:       true,
-					InstallCmd:       FormatInstallCommand("flatpak", flatpakPkg),
+					TrustLevel:       trust.TrustLevel,
+					SignatureStatus:  trust.SignatureStatus,
+					Trust:            trust,
+					CommandPreview:   FormatCommandPreview("flatpak", "flathub", flatpakPkg, "stable", ""),
 				}
 				app.Offers = append(app.Offers, offer)
 				seenOffers[offerID] = true
@@ -254,35 +348,43 @@ func (d *Deduplicator) GroupAndDeduplicate(
 
 	// 2. Process all incoming provider packages
 	for _, p := range pkgs {
-		canonID := d.CanonicalizeID(p.Name)
-		if canonID == "" {
-			canonID = strings.ToLower(p.Name)
+		normProv := normalizeProviderName(p.Provider, p.Repo)
+		res := d.identityResolver.Resolve(p.Name, normProv)
+
+		// Anti-false-merge guard:
+		// Only group packages into the same application key when MatchConfidence is SafeToMerge (>= Medium),
+		// otherwise isolate unconfirmed packages per provider+name so unrelated tools never falsely merge!
+		appKey := res.CanonicalID
+		if !res.Mergeable || appKey == "" {
+			appKey = fmt.Sprintf("%s:%s", normProv, strings.ToLower(p.Name))
 		}
 
-		app, exists := appMap[canonID]
+		app, exists := appMap[appKey]
 		if !exists {
-			// Create a new unified application entry from package heuristics
-			name := strings.Title(p.Name)
-			app = &UnifiedApplication{
-				AppID:       canonID,
-				Name:        name,
-				Summary:     p.Description,
-				Description: p.Description,
-				Developer:   fmt.Sprintf("%s Maintainers", strings.ToUpper(p.Provider)),
-				Homepage:    fmt.Sprintf("https://archlinux.org/packages/?q=%s", p.Name),
-				License:     "GPL / Open Source",
-				Categories:  []string{"Utilities"},
-				Screenshots: []string{},
-				Releases:    []string{},
-				Aliases:     []string{p.Name},
-				Offers:      []PackageOffer{},
-				Rating:      4.6,
-				Reviews:     "1,200",
-				Badge:       "Repository Package",
+			name := res.DisplayName
+			if name == "" {
+				name = strings.Title(p.Name)
 			}
-			appMap[canonID] = app
+			app = &UnifiedApplication{
+				AppID:              appKey,
+				Name:               name,
+				Summary:            p.Description,
+				Description:        p.Description,
+				Developer:          fmt.Sprintf("%s Maintainers", strings.ToUpper(normProv)),
+				Homepage:           fmt.Sprintf("https://archlinux.org/packages/?q=%s", p.Name),
+				License:            "GPL / Open Source",
+				Categories:         []string{"Utilities"},
+				Screenshots:        []string{},
+				Releases:           []string{},
+				Aliases:            []string{p.Name},
+				IdentityConfidence: res.Confidence,
+				Offers:             []PackageOffer{},
+				Rating:             4.6,
+				Reviews:            "1,200",
+				Badge:              "Repository Package",
+			}
+			appMap[appKey] = app
 		} else {
-			// Record alias
 			hasAlias := false
 			for _, a := range app.Aliases {
 				if strings.EqualFold(a, p.Name) {
@@ -295,30 +397,17 @@ func (d *Deduplicator) GroupAndDeduplicate(
 			}
 		}
 
-		// Check installation state
-		isInst := false
-		instVer := ""
-		if ver, ok := installedMap[p.Name]; ok {
-			isInst = true
-			instVer = ver
-		} else if ver, ok := installedMap[canonID]; ok {
-			isInst = true
-			instVer = ver
-		}
-
+		isInst, instVer := matchInstalled(installedMap, p.Name, appKey, normProv)
 		offer := d.ConvertPackageToOffer(p, isInst, instVer)
-		offer.AppID = canonID
+		offer.AppID = appKey
 
-		// Duplicate Offer Elimination:
-		// Check if we already have an identical offer (same Provider, Source, and PackageName)
+		// Duplicate Offer Elimination (preserving distinct branches/channels/archs/repos)
 		if seenOffers[offer.ID] {
-			// Offer already present; if incoming offer has a more specific version, update it
 			for i, existing := range app.Offers {
 				if existing.ID == offer.ID {
-					if existing.Version == "latest" || existing.Version == "Latest" || existing.Version == "" {
-						if offer.Version != "" && offer.Version != "latest" {
-							app.Offers[i].Version = offer.Version
-						}
+					if (existing.Version == "latest" || existing.Version == "Latest" || existing.Version == "") &&
+						offer.Version != "" && !strings.EqualFold(offer.Version, "latest") {
+						app.Offers[i].Version = offer.Version
 					}
 					if !existing.IsInstalled && offer.IsInstalled {
 						app.Offers[i].IsInstalled = true
@@ -343,14 +432,42 @@ func (d *Deduplicator) GroupAndDeduplicate(
 		}
 	}
 
-	// 3. Convert map to stable ordered slice
-	result := make([]UnifiedApplication, 0, len(appMap))
-	for _, app := range appMap {
+	// Deterministic ordering by AppID for reproducible progressive deltas and tests
+	keys := make([]string, 0, len(appMap))
+	for k, app := range appMap {
 		if len(app.Offers) > 0 {
-			result = append(result, *app)
+			keys = append(keys, k)
 		}
+	}
+	sort.Strings(keys)
+
+	result := make([]UnifiedApplication, 0, len(keys))
+	for _, k := range keys {
+		result = append(result, *appMap[k])
 	}
 
 	return result
 }
 
+func matchInstalled(installedMap map[string]string, pkgName, canonID, prov string) (bool, string) {
+	if installedMap == nil {
+		return false, ""
+	}
+	normPkg := strings.ToLower(pkgName)
+	normCanon := strings.ToLower(canonID)
+
+	// Provider-qualified installed key first (prevents false cross-provider installed states!)
+	if ver, ok := installedMap[prov+":"+normPkg]; ok {
+		return true, ver
+	}
+	if ver, ok := installedMap[normPkg]; ok {
+		// Unqualified name match applies only to this exact package name (never blindly across canonID aliases!)
+		return true, ver
+	}
+	if pkgName != "" && strings.EqualFold(normPkg, normCanon) {
+		if ver, ok := installedMap[normCanon]; ok {
+			return true, ver
+		}
+	}
+	return false, ""
+}

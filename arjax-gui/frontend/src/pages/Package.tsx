@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { APPS_DATA, AppDetail } from '../data/appsData';
 import { AppIcon } from '../components/AppIcon';
 import { SourcePicker } from '../components/SourcePicker';
-import { UnifiedApplicationDTO, PackageOfferDTO } from '../types';
+import { UnifiedApplicationDTO, PackageOfferDTO, TransactionDTO } from '../types';
 
 interface Screenshot {
   url: string;
@@ -205,84 +205,132 @@ export const PackagePage: React.FC = () => {
   const complimentaryApps = complementaryCatalog[appCategorySlug] || complementaryCatalog.apps;
   const [complimentaryInstalled, setComplimentaryInstalled] = useState<Record<string, boolean>>({});
 
-  // Install trigger wired to backend Go App for specific offer or active offer
-  const handleInstall = async (targetPkgName?: string, targetProvider?: string) => {
-    const pkgToInstall = targetPkgName || currentOffer?.packageName || normName;
-    const provToInstall = targetProvider || currentOffer?.provider || appProvider;
+  // Listen for unified backend TransactionManager lifecycle updates
+  useEffect(() => {
+    const runtime = (window as any).runtime;
+    if (!runtime || !runtime.EventsOn) return;
+    const unsub = runtime.EventsOn('transaction:update', (tx: TransactionDTO) => {
+      if (!tx || !currentOffer || tx.offerId !== currentOffer.id) return;
+      if (tx.state === 'completed') {
+        setInstallStatus(tx.operation === 'remove' ? 'idle' : 'installed');
+      } else if (tx.state === 'failed' || tx.state === 'cancelled') {
+        setInstallStatus('idle');
+      } else {
+        setInstallStatus('installing');
+      }
+      setToastMessage({
+        title: `${tx.packageName} · ${tx.state.replace('_', ' ').toUpperCase()} (${tx.progress}%)`,
+        desc: tx.errorMessage || tx.message || '',
+      });
+      setToastVisible(true);
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [currentOffer?.id]);
+
+  // Authoritative OfferID-based install trigger (no executable command passed from frontend)
+  const handleInstall = async (offerOverride?: PackageOfferDTO) => {
+    const targetOffer = offerOverride || currentOffer;
+    const pkgToInstall = targetOffer?.packageName || normName;
+    const provToInstall = targetOffer?.provider || appProvider;
 
     if (installStatus === 'installing') return;
 
     setInstallStatus('installing');
     setToastMessage({
       title: `Starting installation of ${appDisplayName}...`,
-      desc: `Resolving packages via ${provToInstall.toUpperCase()} cleanly in background.`
+      desc: `Submitting authoritative OfferID via ${provToInstall.toUpperCase()} transaction engine.`
     });
     setToastVisible(true);
 
     const goApp = (window as any).go?.main?.App;
-    if (goApp && goApp.InstallPackage) {
+    let txSuccess = true;
+    let txErrMsg = '';
+    if (goApp && goApp.InstallOffer && targetOffer?.id) {
+      try {
+        const tx: TransactionDTO = await goApp.InstallOffer(targetOffer.id);
+        txSuccess = tx.state === 'completed';
+        txErrMsg = tx.errorMessage || '';
+      } catch (err: any) {
+        txSuccess = false;
+        txErrMsg = String(err);
+      }
+    } else if (goApp && goApp.InstallPackage) {
       try {
         await goApp.InstallPackage(pkgToInstall, provToInstall);
       } catch (err) {
         console.warn('Backend install call error:', err);
       }
+    } else {
+      await new Promise((r) => setTimeout(r, 1200));
     }
 
-    setTimeout(() => {
+    if (txSuccess) {
       setInstallStatus('installed');
-      if (unifiedApp) {
+      if (unifiedApp && targetOffer) {
         const updatedOffers = unifiedApp.offers.map((o) =>
-          o.packageName === pkgToInstall && o.provider === provToInstall
+          o.id === targetOffer.id
             ? { ...o, isInstalled: true, installedVersion: o.version }
             : o
         );
         setUnifiedApp({ ...unifiedApp, offers: updatedOffers, isInstalled: true });
       }
-
       setToastMessage({
-        title: `${appDisplayName} installed successfully via ${provToInstall.toUpperCase()}!`,
-        desc: 'Application icon registered to your desktop app launcher.'
+        title: `${appDisplayName} installed cleanly via ${provToInstall.toUpperCase()}!`,
+        desc: 'Transaction completed; sibling sources remain untouched.'
       });
-
-      setTimeout(() => {
-        setToastVisible(false);
-      }, 3500);
-    }, 1800);
+    } else {
+      setInstallStatus('idle');
+      setToastMessage({
+        title: `Installation failed for ${appDisplayName}`,
+        desc: txErrMsg || 'Verify system locks or permissions and retry.'
+      });
+    }
+    setTimeout(() => setToastVisible(false), 3500);
   };
 
-  const handleRemove = async (targetPkgName: string, targetProvider: string) => {
+  const handleRemove = async (targetOffer: PackageOfferDTO) => {
     setToastMessage({
-      title: `Removing ${targetPkgName}...`,
-      desc: `Uninstalling package via ${targetProvider.toUpperCase()} cleanly.`
+      title: `Removing ${targetOffer.packageName}...`,
+      desc: `Submitting removal transaction for ${targetOffer.provider.toUpperCase()} offer.`
     });
     setToastVisible(true);
 
     const goApp = (window as any).go?.main?.App;
-    if (goApp && goApp.RemovePackage) {
+    let ok = true;
+    if (goApp && goApp.RemoveOffer && targetOffer.id) {
       try {
-        await goApp.RemovePackage(targetPkgName, targetProvider);
+        const tx: TransactionDTO = await goApp.RemoveOffer(targetOffer.id);
+        ok = tx.state === 'completed';
+      } catch {
+        ok = false;
+      }
+    } else if (goApp && goApp.RemovePackage) {
+      try {
+        await goApp.RemovePackage(targetOffer.packageName, targetOffer.provider);
       } catch (err) {
         console.warn('Backend remove call error:', err);
       }
+    } else {
+      await new Promise((r) => setTimeout(r, 1000));
     }
 
-    setTimeout(() => {
-      if (unifiedApp) {
-        const updatedOffers = unifiedApp.offers.map((o) =>
-          o.packageName === targetPkgName && o.provider === targetProvider
-            ? { ...o, isInstalled: false, installedVersion: undefined }
-            : o
-        );
-        const anyInst = updatedOffers.some((o) => o.isInstalled);
-        setUnifiedApp({ ...unifiedApp, offers: updatedOffers, isInstalled: anyInst });
-      }
+    if (ok && unifiedApp) {
+      const updatedOffers = unifiedApp.offers.map((o) =>
+        o.id === targetOffer.id
+          ? { ...o, isInstalled: false, installedVersion: undefined }
+          : o
+      );
+      const anyInst = updatedOffers.some((o) => o.isInstalled);
+      setUnifiedApp({ ...unifiedApp, offers: updatedOffers, isInstalled: anyInst });
       setInstallStatus('idle');
       setToastMessage({
-        title: `${targetPkgName} uninstalled.`,
-        desc: 'Package and desktop launchers removed.'
+        title: `${targetOffer.packageName} uninstalled.`,
+        desc: 'Selected offer removed cleanly.'
       });
-      setTimeout(() => setToastVisible(false), 2500);
-    }, 1500);
+    }
+    setTimeout(() => setToastVisible(false), 2500);
   };
 
   const handleInstallComplementary = async (appId: string, appName: string, provider: string) => {
@@ -569,8 +617,8 @@ export const PackagePage: React.FC = () => {
             offers={unifiedApp.offers}
             selectedOfferId={selectedOfferId}
             onSelectOffer={(id) => setSelectedOfferId(id)}
-            onInstall={(pkgName, prov) => handleInstall(pkgName, prov)}
-            onRemove={(pkgName, prov) => handleRemove(pkgName, prov)}
+            onInstallOffer={(offer) => handleInstall(offer)}
+            onRemoveOffer={(offer) => handleRemove(offer)}
             installing={installStatus === 'installing'}
             appDisplayName={appDisplayName}
           />

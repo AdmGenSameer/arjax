@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/appstream"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/config"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/providers"
@@ -39,6 +41,8 @@ func main() {
 		providers.NewVendorProvider(),
 	)
 
+	cm := catalog.NewCatalogManager(pm, appstream.NewCrawler(), nil, catalog.DefaultCatalogConfig(), nil)
+
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout())
 	defer cancel()
 
@@ -50,15 +54,21 @@ func main() {
 			exitWithError("search command requires a query string", *jsonOutput)
 		}
 		query := args[0]
-		pkgs, err := pm.SearchAll(ctx, query)
+		apps, err := cm.ProgressiveSearch().SearchSynchronous(ctx, query)
 		if err != nil {
 			exitWithError(err.Error(), *jsonOutput)
 		}
 		outputResponse(map[string]interface{}{
-			"command":  "search",
-			"query":    query,
-			"count":    len(pkgs),
-			"packages": pkgs,
+			"command":      "search",
+			"query":        query,
+			"count":        len(apps),
+			"applications": apps,
+		}, *jsonOutput)
+
+	case "capabilities":
+		outputResponse(map[string]interface{}{
+			"command":      "capabilities",
+			"capabilities": cm.Capabilities(),
 		}, *jsonOutput)
 
 	case "install":
@@ -95,7 +105,7 @@ func main() {
 		outputResponse(info, *jsonOutput)
 
 	case "tui":
-		if err := tui.RunTUI(pm); err != nil {
+		if err := tui.RunTUIWithCatalog(pm, cm); err != nil {
 			exitWithError(err.Error(), false)
 		}
 

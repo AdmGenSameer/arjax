@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/providers"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
@@ -45,6 +46,7 @@ func tickInstall() tea.Cmd {
 
 type Model struct {
 	pm               *providers.ProviderManager
+	catalogMgr       *catalog.CatalogManager
 	distro           string
 	distroName       string
 	textInput        textinput.Model
@@ -59,6 +61,7 @@ type Model struct {
 	statusMsg        string
 	statusType       string // "info", "success", "error", "warning"
 	packages         []models.Package
+	unifiedApps      []catalog.UnifiedApplication
 	pkgInfo          map[string]models.PackageInfo
 	cursor           int
 	scrollOffset     int
@@ -71,6 +74,14 @@ type Model struct {
 }
 
 func NewModel(pm *providers.ProviderManager) Model {
+	cm := catalog.NewCatalogManager(pm, nil, nil, catalog.DefaultCatalogConfig(), nil)
+	return NewModelWithCatalog(pm, cm)
+}
+
+func NewModelWithCatalog(pm *providers.ProviderManager, cm *catalog.CatalogManager) Model {
+	if cm == nil {
+		cm = catalog.NewCatalogManager(pm, nil, nil, catalog.DefaultCatalogConfig(), nil)
+	}
 	ti := textinput.New()
 	ti.Placeholder = "Type to search (e.g. zapfast, brave, neovim) — Press Enter to search..."
 	ti.Prompt = "❯ "
@@ -96,11 +107,13 @@ func NewModel(pm *providers.ProviderManager) Model {
 
 	return Model{
 		pm:              pm,
+		catalogMgr:      cm,
 		distro:          distroLabel,
 		distroName:      distroInfo.Name,
 		textInput:       ti,
 		spinner:         s,
 		packages:        []models.Package{},
+		unifiedApps:     []catalog.UnifiedApplication{},
 		pkgInfo:         make(map[string]models.PackageInfo),
 		activeTab:       0,
 		statusMsg:       "Ready. Type a query and press Enter, or use [Tab] to browse.",
@@ -108,7 +121,7 @@ func NewModel(pm *providers.ProviderManager) Model {
 		installProgress: 0,
 		installStep:     1,
 		logLines: []string{
-			fmt.Sprintf("[%s] Arjax Go Provider Engine initialized.", time.Now().Format("15:04:05")),
+			fmt.Sprintf("[%s] Arjax Shared Core Engine (Identity · Catalog · Transactions) initialized.", time.Now().Format("15:04:05")),
 			fmt.Sprintf("[%s] Detected distribution environment: %s", time.Now().Format("15:04:05"), distroLabel),
 		},
 	}
@@ -414,6 +427,32 @@ func (m Model) runSearch(query string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
+		// Use the shared CatalogManager progressive engine so TUI benefits from deduplication & identity resolution
+		if m.catalogMgr != nil {
+			apps, err := m.catalogMgr.ProgressiveSearch().SearchSynchronous(ctx, query)
+			if err == nil && len(apps) > 0 {
+				var pkgs []models.Package
+				for _, app := range apps {
+					for _, offer := range app.Offers {
+						pkgs = append(pkgs, models.Package{
+							Name:        offer.PackageName,
+							Version:     offer.Version,
+							Description: fmt.Sprintf("[%s · %s] %s", app.Name, offer.Trust.TrustLevel, app.Summary),
+							Size:        offer.DownloadSize,
+							Provider:    offer.Provider,
+							Source:      offer.Repository,
+							Repo:        offer.Repository,
+						})
+					}
+				}
+				return searchDoneMsg{
+					query:    query,
+					packages: pkgs,
+					duration: time.Since(start),
+				}
+			}
+		}
+
 		pkgs, err := m.pm.SearchAll(ctx, query)
 		return searchDoneMsg{
 			query:    query,
@@ -429,6 +468,26 @@ func (m Model) runInstall(pkg models.Package) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 
+		// Route installation through the shared TransactionManager using an authoritative OfferID
+		if m.catalogMgr != nil {
+			offer := m.catalogMgr.Deduplicator().ConvertPackageToOffer(pkg, false, "")
+			m.catalogMgr.Transactions().RegisterOffer(offer)
+			tx, err := m.catalogMgr.InstallOffer(ctx, offer.ID, nil)
+			return actionDoneMsg{
+				action: "install",
+				result: models.Result{
+					Command:    "install",
+					Package:    pkg.Name,
+					Provider:   pkg.Provider,
+					Success:    tx.State == catalog.TxCompleted && err == nil,
+					StartTime:  tx.StartedAt,
+					DurationMs: time.Since(tx.StartedAt).Milliseconds(),
+					Error:      tx.ErrorMessage,
+				},
+				err: err,
+			}
+		}
+
 		res, err := m.pm.Install(ctx, pkg)
 		return actionDoneMsg{action: "install", result: res, err: err}
 	}
@@ -438,6 +497,25 @@ func (m Model) runRemove(pkg models.Package) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
+
+		if m.catalogMgr != nil {
+			offer := m.catalogMgr.Deduplicator().ConvertPackageToOffer(pkg, true, pkg.Version)
+			m.catalogMgr.Transactions().RegisterOffer(offer)
+			tx, err := m.catalogMgr.RemoveOffer(ctx, offer.ID, nil)
+			return actionDoneMsg{
+				action: "remove",
+				result: models.Result{
+					Command:    "remove",
+					Package:    pkg.Name,
+					Provider:   pkg.Provider,
+					Success:    tx.State == catalog.TxCompleted && err == nil,
+					StartTime:  tx.StartedAt,
+					DurationMs: time.Since(tx.StartedAt).Milliseconds(),
+					Error:      tx.ErrorMessage,
+				},
+				err: err,
+			}
+		}
 
 		res, err := m.pm.Remove(ctx, pkg)
 		return actionDoneMsg{action: "remove", result: res, err: err}
@@ -810,9 +888,19 @@ func (m Model) View() string {
 			rightContent.WriteString(fmt.Sprintf("  • %-20s %s\n", "Engine Mode:", "Go High-Performance Provider Core"))
 			rightContent.WriteString(fmt.Sprintf("  • %-20s %s\n\n", "Memory Cache:", "Active (TTL Enabled)"))
 
-			rightContent.WriteString(lipgloss.NewStyle().Bold(true).Foreground(ColorTextBright).Render("ACTIVE PROVIDERS:\n"))
-			for _, pName := range m.pm.GetSupportedProviderNames() {
-				rightContent.WriteString(fmt.Sprintf("  ✔ %-16s %s\n", pName, ProviderBadge(pName)))
+			rightContent.WriteString(lipgloss.NewStyle().Bold(true).Foreground(ColorTextBright).Render("PROVIDER CAPABILITY MATRIX:\n"))
+			if m.catalogMgr != nil {
+				for _, c := range m.catalogMgr.Capabilities() {
+					statusMark := "✔"
+					if !c.AvailableOnHost {
+						statusMark = "○"
+					}
+					rightContent.WriteString(fmt.Sprintf("  %s %-10s [Search:%s | Install:%s | Update:%s]\n", statusMark, strings.ToUpper(c.Provider), c.Search, c.Install, c.Update))
+				}
+			} else {
+				for _, pName := range m.pm.GetSupportedProviderNames() {
+					rightContent.WriteString(fmt.Sprintf("  ✔ %-16s %s\n", pName, ProviderBadge(pName)))
+				}
 			}
 		}
 	}
@@ -854,7 +942,11 @@ func (m Model) View() string {
 }
 
 func RunTUI(pm *providers.ProviderManager) error {
-	p := tea.NewProgram(NewModel(pm), tea.WithAltScreen())
+	return RunTUIWithCatalog(pm, nil)
+}
+
+func RunTUIWithCatalog(pm *providers.ProviderManager, cm *catalog.CatalogManager) error {
+	p := tea.NewProgram(NewModelWithCatalog(pm, cm), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
