@@ -10,6 +10,7 @@ import (
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/appstream"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog/identity"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
 )
 
 // Deduplicator groups heterogeneous package offers under canonical AppStream identities
@@ -73,19 +74,51 @@ func BuildOfferID(provider, source, packageName, _ string) string {
 }
 
 func normalizeProviderName(provider, repo string) string {
+	return normalizePackageProvider(provider, repo, "")
+}
+
+func normalizePackageProvider(provider, repo, source string) string {
 	prov := strings.ToLower(strings.TrimSpace(provider))
 	r := strings.ToLower(strings.TrimSpace(repo))
-	if prov == "repository" {
-		if r == "aur" {
-			return "aur"
-		}
+	s := strings.ToLower(strings.TrimSpace(source))
+
+	if prov == "paru" || prov == "yay" {
 		return "pacman"
 	}
-	if prov == "" {
-		if r == "aur" {
+	if prov == "repository" || prov == "" {
+		if r == "aur" || s == "aur" {
 			return "aur"
 		}
-		return "pacman"
+		switch s {
+		case "apt", "deb":
+			return "apt"
+		case "dnf", "rpm":
+			return "dnf"
+		case "zypper":
+			return "zypper"
+		case "pacman", "paru", "yay":
+			return "pacman"
+		}
+		switch {
+		case r == "apt" || r == "deb" || strings.Contains(r, "kali") || strings.Contains(r, "debian") || strings.Contains(r, "ubuntu"):
+			return "apt"
+		case r == "dnf" || r == "rpm" || strings.Contains(r, "fedora"):
+			return "dnf"
+		case r == "zypper" || strings.Contains(r, "opensuse"):
+			return "zypper"
+		case r == "core" || r == "extra" || r == "multilib":
+			return "pacman"
+		}
+		switch utils.DetectPackageManager() {
+		case "apt":
+			return "apt"
+		case "dnf":
+			return "dnf"
+		case "zypper":
+			return "zypper"
+		default:
+			return "pacman"
+		}
 	}
 	return prov
 }
@@ -151,6 +184,8 @@ func FormatCommandPreview(provider, repo, packageName, branch, channel string) s
 		return fmt.Sprintf("sudo apt install %s", packageName)
 	case "rpm", "dnf":
 		return fmt.Sprintf("sudo dnf install %s", packageName)
+	case "zypper":
+		return fmt.Sprintf("sudo zypper install %s", packageName)
 	default:
 		return fmt.Sprintf("arjax install %s --provider %s", packageName, provider)
 	}
@@ -163,7 +198,7 @@ func (d *Deduplicator) ConvertPackageToOffer(p models.Package, isInstalled bool,
 	if repo == "" {
 		repo = p.Source
 	}
-	prov := normalizeProviderName(p.Provider, repo)
+	prov := normalizePackageProvider(p.Provider, p.Repo, p.Source)
 	if repo == "" || repo == "repository" {
 		if prov == "aur" {
 			repo = "aur"
@@ -251,6 +286,26 @@ func (d *Deduplicator) ConvertPackageToOffer(p models.Package, isInstalled bool,
 		SignatureStatus:  trust.SignatureStatus,
 		Trust:            trust,
 		CommandPreview:   FormatCommandPreview(prov, repo, p.Name, branch, channel),
+	}
+}
+
+// HomepageForProvider returns an ecosystem-appropriate package lookup URL.
+func HomepageForProvider(provider, pkgName string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "apt", "deb":
+		return fmt.Sprintf("https://packages.debian.org/search?keywords=%s", pkgName)
+	case "dnf", "rpm":
+		return fmt.Sprintf("https://packages.fedoraproject.org/search?query=%s", pkgName)
+	case "zypper":
+		return fmt.Sprintf("https://software.opensuse.org/search?q=%s", pkgName)
+	case "aur":
+		return fmt.Sprintf("https://aur.archlinux.org/packages/%s", pkgName)
+	case "flatpak":
+		return fmt.Sprintf("https://flathub.org/apps/%s", pkgName)
+	case "snap":
+		return fmt.Sprintf("https://snapcraft.io/%s", pkgName)
+	default:
+		return fmt.Sprintf("https://archlinux.org/packages/?q=%s", pkgName)
 	}
 }
 
@@ -354,7 +409,7 @@ func (d *Deduplicator) GroupAndDeduplicate(
 
 	// 2. Process all incoming provider packages
 	for _, p := range pkgs {
-		normProv := normalizeProviderName(p.Provider, p.Repo)
+		normProv := normalizePackageProvider(p.Provider, p.Repo, p.Source)
 		res := d.identityResolver.Resolve(p.Name, normProv)
 
 		// Anti-false-merge guard:
@@ -377,7 +432,7 @@ func (d *Deduplicator) GroupAndDeduplicate(
 				Summary:            p.Description,
 				Description:        p.Description,
 				Developer:          fmt.Sprintf("%s Maintainers", strings.ToUpper(normProv)),
-				Homepage:           fmt.Sprintf("https://archlinux.org/packages/?q=%s", p.Name),
+				Homepage:           HomepageForProvider(normProv, p.Name),
 				License:            "GPL / Open Source",
 				Categories:         []string{"Utilities"},
 				Screenshots:        []string{},

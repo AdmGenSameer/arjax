@@ -316,10 +316,15 @@ func (a *App) GetAppDetails(appId string) EngineAppDetailsDTO {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 
+	nativePM := utils.DetectPackageManager()
+	if nativePM == "paru" || nativePM == "yay" || nativePM == "" {
+		nativePM = "pacman"
+	}
+
 	resDTO := EngineAppDetailsDTO{
 		ID:          trimmed,
 		Name:        strings.Title(trimmed),
-		Provider:    "pacman",
+		Provider:    nativePM,
 		License:     "GPL / Open Source",
 		Rating:      4.8,
 		Reviews:     "14,800",
@@ -347,7 +352,7 @@ func (a *App) GetAppDetails(appId string) EngineAppDetailsDTO {
 		}
 	}
 
-	// 2. Pacman / AUR live system specs overlay
+	// 2. Native distro / AUR live system specs overlay
 	if sysInfo, err := a.pm.Info(ctx, trimmed); err == nil && sysInfo.Name != "" {
 		if resDTO.Version == "" && sysInfo.Version != "" {
 			resDTO.Version = sysInfo.Version
@@ -356,13 +361,17 @@ func (a *App) GetAppDetails(appId string) EngineAppDetailsDTO {
 			resDTO.Headline = sysInfo.Description
 		}
 		if resDTO.Website == "" && sysInfo.Repo != "" {
-			resDTO.Website = fmt.Sprintf("https://archlinux.org/packages/%s", trimmed)
+			resDTO.Website = catalog.HomepageForProvider(nativePM, trimmed)
 		}
 		if resDTO.Size == "" && sysInfo.Size != "" {
 			resDTO.Size = sysInfo.Size
 		}
-		if sysInfo.Provider != "" && resDTO.Provider == "pacman" {
-			resDTO.Provider = sysInfo.Provider
+		if sysInfo.Provider != "" && resDTO.Provider == nativePM {
+			if strings.EqualFold(sysInfo.Provider, "repository") {
+				resDTO.Provider = nativePM
+			} else {
+				resDTO.Provider = sysInfo.Provider
+			}
 		}
 	}
 
@@ -517,33 +526,17 @@ func (a *App) CheckForUpdates() []UpdateItemDTO {
 
 	var updates []UpdateItemDTO
 
-	// 1. Arch pacman checkupdates
-	if utils.CommandExists("checkupdates") {
-		cmd := exec.CommandContext(ctx, "checkupdates")
-		out, err := cmd.Output()
-		if err == nil && len(out) > 0 {
-			scanner := bufio.NewScanner(strings.NewReader(string(out)))
-			count := 0
-			for scanner.Scan() && count < 25 {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "" {
-					continue
-				}
-				parts := strings.Split(line, " -> ")
-				if len(parts) == 2 {
-					leftParts := strings.Fields(parts[0])
-					if len(leftParts) == 2 {
-						updates = append(updates, UpdateItemDTO{
-							Name:       leftParts[0],
-							OldVersion: leftParts[1],
-							NewVersion: parts[1],
-							Provider:   "pacman",
-							Size:       "~18 MB",
-						})
-						count++
-					}
-				}
-			}
+	// 1. Native updates across all supported Linux ecosystems (pacman, apt, dnf, zypper, flatpak, snap)
+	if a.catalogMgr != nil {
+		summary := a.catalogMgr.Updates().CheckAllUpdates(ctx)
+		for _, u := range summary.Updates {
+			updates = append(updates, UpdateItemDTO{
+				Name:       u.PackageName,
+				OldVersion: u.InstalledVersion,
+				NewVersion: u.AvailableVersion,
+				Provider:   u.Provider,
+				Size:       u.DownloadSize,
+			})
 		}
 	}
 
@@ -608,49 +601,102 @@ func (a *App) GetInstalledPackages() []InstalledPackageDTO {
 		}
 	}
 
-	// 2. Check explicitly installed pacman packages
-	if utils.CommandExists("pacman") {
-		cmd := exec.CommandContext(ctx, "pacman", "-Qe")
-		out, err := cmd.Output()
-		if err == nil {
+	// 2. Check native explicitly installed packages across Arch (pacman), Debian/Kali/Ubuntu (dpkg), Fedora/RHEL/openSUSE (rpm)
+	appendNativeInstalled := func(name, ver, provider, format string) {
+		category := "apps"
+		icon := "inventory_2"
+		if strings.Contains(name, "steam") || strings.Contains(name, "game") {
+			category = "games"
+			icon = "sports_esports"
+		} else if strings.Contains(name, "code") || strings.Contains(name, "terminal") {
+			icon = "code"
+		} else if strings.Contains(name, "browser") || strings.Contains(name, "brave") || strings.Contains(name, "firefox") {
+			icon = "travel_explore"
+		}
+		disp := name
+		if len(name) > 0 {
+			disp = strings.ToUpper(name[:1]) + name[1:]
+		}
+		pkgs = append(pkgs, InstalledPackageDTO{
+			ID:           name,
+			Name:         name,
+			DisplayName:  disp,
+			Version:      ver,
+			Provider:     provider,
+			Format:       format,
+			Size:         "185 MB",
+			SizeMB:       185,
+			Category:     category,
+			Icon:         icon,
+			LastActivity: "System Package",
+			IsNative:     true,
+		})
+	}
+
+	switch utils.DetectPackageManager() {
+	case "apt":
+		if utils.CommandExists("dpkg-query") {
+			cmd := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package}\t${Version}\n")
+			if out, err := cmd.Output(); err == nil {
+				scanner := bufio.NewScanner(strings.NewReader(string(out)))
+				count := 0
+				for scanner.Scan() && count < 40 {
+					parts := strings.SplitN(strings.TrimSpace(scanner.Text()), "\t", 2)
+					if len(parts) == 2 && parts[0] != "" {
+						appendNativeInstalled(parts[0], parts[1], "apt", "Native DEB (APT)")
+						count++
+					}
+				}
+			}
+		}
+	case "dnf", "zypper":
+		nativeProv := utils.DetectPackageManager()
+		if utils.CommandExists("rpm") {
+			cmd := exec.CommandContext(ctx, "rpm", "-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\n")
+			if out, err := cmd.Output(); err == nil {
+				scanner := bufio.NewScanner(strings.NewReader(string(out)))
+				count := 0
+				for scanner.Scan() && count < 40 {
+					parts := strings.SplitN(strings.TrimSpace(scanner.Text()), "\t", 2)
+					if len(parts) == 2 && parts[0] != "" {
+						appendNativeInstalled(parts[0], parts[1], nativeProv, fmt.Sprintf("Native RPM (%s)", strings.ToUpper(nativeProv)))
+						count++
+					}
+				}
+			}
+		}
+	default:
+		if utils.CommandExists("pacman") {
+			cmd := exec.CommandContext(ctx, "pacman", "-Qe")
+			if out, err := cmd.Output(); err == nil {
+				scanner := bufio.NewScanner(strings.NewReader(string(out)))
+				count := 0
+				for scanner.Scan() && count < 40 {
+					parts := strings.Fields(strings.TrimSpace(scanner.Text()))
+					if len(parts) >= 2 {
+						appendNativeInstalled(parts[0], parts[1], "pacman", "Native Pacman")
+						count++
+					}
+				}
+			}
+		}
+	}
+
+	// 2b. Check installed Snap packages
+	if utils.CommandExists("snap") {
+		if out, err := exec.CommandContext(ctx, "snap", "list").Output(); err == nil {
 			scanner := bufio.NewScanner(strings.NewReader(string(out)))
-			count := 0
-			for scanner.Scan() && count < 25 {
+			first := true
+			for scanner.Scan() {
 				line := strings.TrimSpace(scanner.Text())
-				if line == "" {
+				if first {
+					first = false
 					continue
 				}
-				parts := strings.Fields(line)
-				if len(parts) >= 2 {
-					name := parts[0]
-					ver := parts[1]
-					category := "apps"
-					icon := "inventory_2"
-
-					if strings.Contains(name, "steam") || strings.Contains(name, "game") {
-						category = "games"
-						icon = "sports_esports"
-					} else if strings.Contains(name, "code") || strings.Contains(name, "terminal") {
-						icon = "code"
-					} else if strings.Contains(name, "browser") || strings.Contains(name, "brave") {
-						icon = "travel_explore"
-					}
-
-					pkgs = append(pkgs, InstalledPackageDTO{
-						ID:           name,
-						Name:         name,
-						DisplayName:  strings.ToUpper(name[:1]) + name[1:],
-						Version:      ver,
-						Provider:     "pacman",
-						Format:       "Native Pacman",
-						Size:         "185 MB",
-						SizeMB:       185,
-						Category:     category,
-						Icon:         icon,
-						LastActivity: "System Package",
-						IsNative:     true,
-					})
-					count++
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					appendNativeInstalled(fields[0], fields[1], "snap", "Snap (Sandboxed)")
+					pkgs[len(pkgs)-1].IsNative = false
 				}
 			}
 		}

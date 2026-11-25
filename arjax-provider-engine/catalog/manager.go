@@ -12,6 +12,7 @@ import (
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/icons"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/models"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/providers"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
 )
 
 // CatalogManager is the unified core orchestrator shared across GUI and TUI for
@@ -237,26 +238,41 @@ func (cm *CatalogManager) GetUnifiedAppDetails(ctx context.Context, appIdOrPkg s
 	}
 
 	if targetApp == nil {
-		trust := EvaluateSourceTrust("pacman", "extra", clean)
+		fallbackProv := "pacman"
+		fallbackRepo := "extra"
+		switch utils.DetectPackageManager() {
+		case "apt":
+			fallbackProv = "apt"
+			fallbackRepo = "main"
+		case "dnf":
+			fallbackProv = "dnf"
+			fallbackRepo = "fedora"
+		case "zypper":
+			fallbackProv = "zypper"
+			fallbackRepo = "oss"
+		}
+		fallbackHomepage := HomepageForProvider(fallbackProv, clean)
+
+		trust := EvaluateSourceTrust(fallbackProv, fallbackRepo, clean)
 		fallbackOffer := PackageOffer{
-			ID:              BuildOfferIdentity("pacman", "extra", clean, "", "", ""),
+			ID:              BuildOfferIdentity(fallbackProv, fallbackRepo, clean, "", "", ""),
 			AppID:           canonID,
 			PackageName:     clean,
-			Provider:        "pacman",
-			Repository:      "extra",
-			Source:          "extra",
+			Provider:        fallbackProv,
+			Repository:      fallbackRepo,
+			Source:          fallbackRepo,
 			Architecture:    hostDefaultArch(),
 			Version:         "Latest",
 			DownloadSize:    "~45 MB",
 			InstalledSize:   "~120 MB",
 			InstallScope:    ScopeSystem,
 			Scope:           ScopeSystem,
-			Permissions:     DeterminePermissions("pacman", clean),
+			Permissions:     DeterminePermissions(fallbackProv, clean),
 			IsEligible:      true,
 			TrustLevel:      trust.TrustLevel,
 			SignatureStatus: trust.SignatureStatus,
 			Trust:           trust,
-			CommandPreview:  FormatCommandPreview("pacman", "extra", clean, "", ""),
+			CommandPreview:  FormatCommandPreview(fallbackProv, fallbackRepo, clean, "", ""),
 		}
 
 		targetApp = &UnifiedApplication{
@@ -265,7 +281,7 @@ func (cm *CatalogManager) GetUnifiedAppDetails(ctx context.Context, appIdOrPkg s
 			Summary:            fmt.Sprintf("Application package for %s", clean),
 			Description:        "Software package indexed for Linux.",
 			Developer:          "Linux Community Maintainers",
-			Homepage:           fmt.Sprintf("https://archlinux.org/packages/?q=%s", clean),
+			Homepage:           fallbackHomepage,
 			License:            "Open Source",
 			Categories:         []string{"Utilities"},
 			Screenshots:        []string{},

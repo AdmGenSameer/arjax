@@ -37,9 +37,16 @@ func NewRecommendationEngineWithCapabilities(cfg CatalogConfig, caps map[string]
 // CheckEligibility verifies both host provider capabilities and active policy constraints.
 func (r *RecommendationEngine) CheckEligibility(offer *PackageOffer) {
 	prov := strings.ToLower(strings.TrimSpace(offer.Provider))
+	capKey := prov
+	switch prov {
+	case "apt":
+		capKey = "deb"
+	case "dnf":
+		capKey = "rpm"
+	}
 
 	// 1. Check host provider capabilities
-	if capInfo, ok := r.capabilities[prov]; ok {
+	if capInfo, ok := r.capabilities[capKey]; ok {
 		if eligible, reason := capInfo.CanPerform("install"); !eligible {
 			offer.IsEligible = false
 			offer.IneligibleReason = reason

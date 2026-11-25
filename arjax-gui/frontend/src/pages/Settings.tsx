@@ -3,11 +3,11 @@ import { Settings2, Shield, Bug, ExternalLink, Cpu, Zap, CheckCircle2 } from 'lu
 
 export const SettingsPage: React.FC = () => {
   const [providers, setProviders] = useState([
-    { id: 'pacman', label: 'Arch Official Repositories', desc: 'Sync with official archlinux.org core/extra/multilib mirrors', enabled: true },
-    { id: 'aur', label: 'Arch User Repository (AUR / Paru)', desc: 'Compile PKGBUILD sources and clone git aur dependencies', enabled: true },
-    { id: 'flatpak', label: 'Flathub Sandboxed Runtimes', desc: 'Isolate desktop apps using bubblewrap namespaces', enabled: true },
-    { id: 'snap', label: 'Canonical Snapcraft Runtimes', desc: 'Apparmor confined squashfs bundles', enabled: false },
-    { id: 'github', label: 'Direct GitHub Releases & AppImages', desc: 'Auto-discover release binaries from official GitHub repos', enabled: true },
+    { id: 'native', label: 'Native Distro Repositories (APT / DNF / Zypper / Pacman)', desc: 'Sync with official distribution binary repositories for your Linux OS', enabled: true },
+    { id: 'aur', label: 'Arch User Repository (AUR / Paru)', desc: 'Compile PKGBUILD sources cleanly on Arch-based distributions', enabled: true },
+    { id: 'flatpak', label: 'Flathub Sandboxed Runtimes', desc: 'Universal cross-distro desktop apps isolated with bubblewrap', enabled: true },
+    { id: 'snap', label: 'Canonical Snapcraft Runtimes', desc: 'Cross-distro AppArmor confined squashfs bundles', enabled: true },
+    { id: 'github', label: 'Direct GitHub Releases (.deb / .AppImage / binaries)', desc: 'Auto-discover distro-appropriate release assets from official GitHub repos', enabled: true },
   ]);
 
   const [autoSync, setAutoSync] = useState(true);
@@ -69,14 +69,12 @@ export const SettingsPage: React.FC = () => {
               </div>
               <button
                 onClick={() => toggleProvider(p.id)}
-                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                  p.enabled ? 'bg-fluent-blue' : 'bg-white/10'
-                }`}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${p.enabled ? 'bg-fluent-blue' : 'bg-white/10'
+                  }`}
               >
                 <span
-                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                    p.enabled ? 'translate-x-5' : 'translate-x-0'
-                  }`}
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${p.enabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
                 />
               </button>
             </div>
@@ -99,14 +97,12 @@ export const SettingsPage: React.FC = () => {
             </div>
             <button
               onClick={() => setParallelDownloads(!parallelDownloads)}
-              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                parallelDownloads ? 'bg-fluent-blue' : 'bg-white/10'
-              }`}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${parallelDownloads ? 'bg-fluent-blue' : 'bg-white/10'
+                }`}
             >
               <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                  parallelDownloads ? 'translate-x-5' : 'translate-x-0'
-                }`}
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${parallelDownloads ? 'translate-x-5' : 'translate-x-0'
+                  }`}
               />
             </button>
           </div>
@@ -118,14 +114,12 @@ export const SettingsPage: React.FC = () => {
             </div>
             <button
               onClick={() => setAutoSync(!autoSync)}
-              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                autoSync ? 'bg-fluent-blue' : 'bg-white/10'
-              }`}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${autoSync ? 'bg-fluent-blue' : 'bg-white/10'
+                }`}
             >
               <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                  autoSync ? 'translate-x-5' : 'translate-x-0'
-                }`}
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${autoSync ? 'translate-x-5' : 'translate-x-0'
+                  }`}
               />
             </button>
           </div>

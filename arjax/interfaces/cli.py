@@ -615,6 +615,7 @@ def batch_install_packages(package_names: List[str]) -> None:
         return
     
     detected = detect_distro()
+    detected_family = DISTRO_MAP.get(detected, "unknown")
     console.print(f"\n[bold cyan]Batch Installation Mode[/bold cyan]")
     console.print(f"Target platform: [cyan]{detected}[/cyan]")
     console.print(f"Packages to install: [yellow]{', '.join(package_names)}[/yellow]\n")
@@ -631,7 +632,7 @@ def batch_install_packages(package_names: List[str]) -> None:
         search_errors = []
         
         # Search based on detected distribution
-        if detected == "arch":
+        if detected_family == "arch":
             try:
                 aur_results = search_aur(pkg_name)
                 results.extend(aur_results)
@@ -644,14 +645,14 @@ def batch_install_packages(package_names: List[str]) -> None:
             except Exception as e:
                 search_errors.append("Pacman")
                 
-        elif detected == "debian":
+        elif detected_family == "debian":
             try:
                 apt_results = search_apt(pkg_name)
                 results.extend(apt_results)
             except Exception as e:
                 search_errors.append("APT")
                 
-        elif detected == "fedora":
+        elif detected_family == "fedora":
             try:
                 dnf_results = search_dnf(pkg_name)
                 results.extend(dnf_results)

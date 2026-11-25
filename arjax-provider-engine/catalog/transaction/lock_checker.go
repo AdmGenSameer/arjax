@@ -6,25 +6,59 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
 )
 
 // LockChecker detects active host package-manager database locks before mutating system state.
 type LockChecker func(provider string) (locked bool, lockPath string)
 
-// DefaultHostLockChecker checks authoritative native package-manager lock files (db.lck, dpkg, dnf).
+func isPosixFileLocked(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	lk := syscall.Flock_t{
+		Type:   syscall.F_WRLCK,
+		Whence: 0,
+		Start:  0,
+		Len:    0,
+	}
+	if err := syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lk); err != nil {
+		return false
+	}
+	return lk.Type != syscall.F_UNLCK
+}
+
+// DefaultHostLockChecker checks authoritative native package-manager lock files (db.lck, dpkg, dnf, zypper).
 func DefaultHostLockChecker(provider string) (bool, string) {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "pacman", "aur", "paru", "repository":
+	prov := strings.ToLower(strings.TrimSpace(provider))
+	if prov == "repository" || prov == "" {
+		detected := strings.ToLower(strings.TrimSpace(utils.DetectPackageManager()))
+		if detected != "" {
+			prov = detected
+		}
+	}
+	switch prov {
+	case "pacman", "aur", "paru":
 		if _, err := os.Stat("/var/lib/pacman/db.lck"); err == nil {
 			return true, "/var/lib/pacman/db.lck"
 		}
 	case "deb", "apt":
-		if _, err := os.Stat("/var/lib/dpkg/lock-frontend"); err == nil {
-			return false, ""
+		for _, lockFile := range []string{"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock", "/var/lib/apt/lists/lock"} {
+			if isPosixFileLocked(lockFile) {
+				return true, lockFile
+			}
 		}
 	case "rpm", "dnf":
 		if _, err := os.Stat("/var/run/dnf.pid"); err == nil {
 			return true, "/var/run/dnf.pid"
+		}
+	case "zypper":
+		if _, err := os.Stat("/var/run/zypp.pid"); err == nil {
+			return true, "/var/run/zypp.pid"
 		}
 	}
 	return false, ""
@@ -56,4 +90,3 @@ func AcquireProcessCoordLock(provider string) (release func(), err error) {
 		_ = f.Close()
 	}, nil
 }
-

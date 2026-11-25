@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
 )
 
 // ErrNotComparableVersion indicates that one or both strings are release tracks/channels
@@ -41,7 +43,7 @@ type ALPMComparator struct{}
 
 func (ALPMComparator) Supports(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "pacman", "aur", "paru", "repository":
+	case "pacman", "aur", "paru":
 		return true
 	default:
 		return false
@@ -124,10 +126,23 @@ var registeredComparators = []VersionComparator{
 	NumericReleaseComparator{},
 }
 
+func resolveVersionProvider(provider string) string {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	if p == "repository" || p == "" {
+		detected := strings.ToLower(strings.TrimSpace(utils.DetectPackageManager()))
+		if detected == "paru" || detected == "yay" || detected == "" {
+			return "pacman"
+		}
+		return detected
+	}
+	return p
+}
+
 // GetVersionComparator selects the isolated comparator for a package ecosystem.
 func GetVersionComparator(provider string) VersionComparator {
+	resolved := resolveVersionProvider(provider)
 	for _, c := range registeredComparators {
-		if c.Supports(provider) {
+		if c.Supports(resolved) {
 			return c
 		}
 	}

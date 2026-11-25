@@ -6,17 +6,24 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
 )
 
 // InstalledStateProbe queries the real host package manager (honoring installation scope where applicable)
 // to determine whether a package currently exists on the system and at which exact version.
 type InstalledStateProbe func(ctx context.Context, provider, pkgName, scope string) (installed bool, version string, err error)
 
-// DefaultHostInstalledProbe checks pacman/flatpak/snap on the local Linux host.
+// DefaultHostInstalledProbe checks pacman/apt/dnf/zypper/flatpak/snap on the local Linux host.
 func DefaultHostInstalledProbe(ctx context.Context, provider, pkgName, scope string) (bool, string, error) {
 	prov := strings.ToLower(strings.TrimSpace(provider))
+	if prov == "repository" || prov == "" {
+		if detected := strings.ToLower(strings.TrimSpace(utils.DetectPackageManager())); detected != "" {
+			prov = detected
+		}
+	}
 	switch prov {
-	case "pacman", "aur", "paru", "repository":
+	case "pacman", "aur", "paru":
 		if pkgName == "" || pkgName == "system-update" || pkgName == "aur-update" {
 			return false, "", fmt.Errorf("system-wide upgrade transaction cannot be reconciled by single package name")
 		}
@@ -29,6 +36,34 @@ func DefaultHostInstalledProbe(ctx context.Context, provider, pkgName, scope str
 			return true, fields[1], nil
 		}
 		return true, "", nil
+
+	case "apt", "deb":
+		if pkgName == "" || pkgName == "system-update" {
+			return false, "", fmt.Errorf("system-wide upgrade transaction cannot be reconciled by single package name")
+		}
+		out, err := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Status}\t${Version}\n", pkgName).Output()
+		if err != nil {
+			return false, "", nil
+		}
+		parts := strings.SplitN(strings.TrimSpace(string(out)), "\t", 2)
+		if len(parts) >= 1 && strings.Contains(parts[0], "installed") {
+			ver := ""
+			if len(parts) >= 2 {
+				ver = strings.TrimSpace(parts[1])
+			}
+			return true, ver, nil
+		}
+		return false, "", nil
+
+	case "dnf", "rpm", "zypper":
+		if pkgName == "" || pkgName == "system-update" {
+			return false, "", fmt.Errorf("system-wide upgrade transaction cannot be reconciled by single package name")
+		}
+		out, err := exec.CommandContext(ctx, "rpm", "-q", "--qf", "%{VERSION}-%{RELEASE}\n", pkgName).Output()
+		if err != nil {
+			return false, "", nil
+		}
+		return true, strings.TrimSpace(string(out)), nil
 
 	case "flatpak":
 		args := []string{"info"}

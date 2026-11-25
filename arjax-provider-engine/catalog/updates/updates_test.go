@@ -237,3 +237,56 @@ func TestSnapRevalidationWhenStateChangesBetweenPreviewAndExecution(t *testing.T
 		t.Errorf("Expected snap provider not called redundantly once revalidation confirmed already up-to-date")
 	}
 }
+
+func TestCrossDistroUpdateDiscoveryAptDnfZypper(t *testing.T) {
+	// 1. APT (Debian / Ubuntu / Kali)
+	aptUpd := NewAptUpdateProviderWithRunner(nil, func(ctx context.Context, name string, args ...string) utils.ExecResult {
+		return utils.ExecResult{
+			ExitCode: 0,
+			Stdout: `Listing... Done
+openssl/kali-rolling 3.3.2-1 amd64 [upgradable from: 3.3.1-2]
+curl/kali-rolling 8.10.1-1 amd64 [upgradable from: 8.9.1-2]
+`,
+		}
+	})
+	apts, err := aptUpd.CheckUpdates(context.Background())
+	if err != nil || len(apts) != 2 {
+		t.Fatalf("Expected 2 APT updates, got len=%d err=%v", len(apts), err)
+	}
+	if apts[0].Provider != "apt" || apts[0].Repository != "kali-rolling" || apts[0].InstalledVersion != "3.3.1-2" || apts[0].AvailableVersion != "3.3.2-1" {
+		t.Errorf("Unexpected parsed APT update: %+v", apts[0])
+	}
+
+	// 2. DNF (Fedora / RHEL) - exit code 0 = zero updates, exit code 100 = updates found
+	dnfZero := NewDnfUpdateProviderWithRunner(nil, func(ctx context.Context, name string, args ...string) utils.ExecResult {
+		return utils.ExecResult{ExitCode: 0}
+	})
+	if z, err := dnfZero.CheckUpdates(context.Background()); err != nil || len(z) != 0 {
+		t.Errorf("Expected DNF exit 0 to return empty without error; got len=%d err=%v", len(z), err)
+	}
+	dnfFound := NewDnfUpdateProviderWithRunner(nil, func(ctx context.Context, name string, args ...string) utils.ExecResult {
+		return utils.ExecResult{
+			ExitCode: 100,
+			Stdout:   "firefox.x86_64   132.0-1.fc41   updates\n",
+		}
+	})
+	dnfs, err := dnfFound.CheckUpdates(context.Background())
+	if err != nil || len(dnfs) != 1 || dnfs[0].Provider != "dnf" || dnfs[0].PackageName != "firefox" || dnfs[0].Repository != "updates" {
+		t.Errorf("Unexpected DNF update discovery result: %+v err=%v", dnfs, err)
+	}
+
+	// 3. Zypper (openSUSE)
+	zypUpd := NewZypperUpdateProviderWithRunner(nil, func(ctx context.Context, name string, args ...string) utils.ExecResult {
+		return utils.ExecResult{
+			ExitCode: 0,
+			Stdout: `S | Repository       | Name | Current Version | Available Version | Arch
+--+------------------+------+-----------------+-------------------+-------
+v | repo-oss         | vlc  | 3.0.20-1.1      | 3.0.21-1.1        | x86_64
+`,
+		}
+	})
+	zyps, err := zypUpd.CheckUpdates(context.Background())
+	if err != nil || len(zyps) != 1 || zyps[0].Provider != "zypper" || zyps[0].PackageName != "vlc" || zyps[0].InstalledVersion != "3.0.20-1.1" {
+		t.Errorf("Unexpected Zypper update discovery result: %+v err=%v", zyps, err)
+	}
+}

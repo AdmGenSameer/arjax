@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -24,6 +25,11 @@ func NewRepositoryProvider(preferredPM string) *RepositoryProvider {
 
 func (rp *RepositoryProvider) Name() string {
 	return "repository"
+}
+
+// PackageManager returns the underlying distro package manager binary (pacman, paru, apt, dnf, zypper).
+func (rp *RepositoryProvider) PackageManager() string {
+	return rp.pm
 }
 
 func (rp *RepositoryProvider) IsSupported() bool {
@@ -84,22 +90,73 @@ func (rp *RepositoryProvider) parseSearchResults(output string, query string) []
 					Version:     version,
 					Description: desc,
 					Provider:    "repository",
-					Source:      "repository",
+					Source:      rp.pm,
 					Repo:        repo,
 				})
+			}
+		}
+	case "apt":
+		for i := 0; i < len(lines); i++ {
+			rawLine := lines[i]
+			line := strings.TrimSpace(rawLine)
+			if line == "" || strings.HasPrefix(line, "Sorting...") || strings.HasPrefix(line, "Full Text Search...") {
+				continue
+			}
+			// apt search package headers are unindented and formatted as:
+			// name/suite[,now] version arch [installed]
+			if !strings.HasPrefix(rawLine, " ") && !strings.HasPrefix(rawLine, "\t") {
+				parts := strings.Fields(line)
+				if len(parts) >= 1 && strings.Contains(parts[0], "/") {
+					slashIdx := strings.Index(parts[0], "/")
+					name := parts[0][:slashIdx]
+					suite := strings.SplitN(parts[0][slashIdx+1:], ",", 2)[0]
+					if suite == "" {
+						suite = "apt"
+					}
+					version := ""
+					if len(parts) >= 2 {
+						version = parts[1]
+					}
+					arch := ""
+					if len(parts) >= 3 && !strings.HasPrefix(parts[2], "[") {
+						arch = parts[2]
+					}
+					desc := ""
+					if i+1 < len(lines) && (strings.HasPrefix(lines[i+1], "  ") || strings.HasPrefix(lines[i+1], "\t")) {
+						desc = strings.TrimSpace(lines[i+1])
+						i++
+					}
+					if name != "" {
+						pkgs = append(pkgs, models.Package{
+							Name:        name,
+							Version:     version,
+							Arch:        arch,
+							Description: desc,
+							Provider:    "repository",
+							Source:      "apt",
+							Repo:        suite,
+						})
+					}
+				}
 			}
 		}
 	default:
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "Sorting...") || strings.HasPrefix(line, "Full Text Search...") {
+			if line == "" || strings.HasPrefix(line, "Sorting...") || strings.HasPrefix(line, "Full Text Search...") || strings.HasPrefix(line, "==") || strings.HasPrefix(line, "--") {
 				continue
 			}
-			parts := strings.SplitN(line, "-", 2)
-			nameVer := strings.TrimSpace(parts[0])
-			desc := ""
-			if len(parts) > 1 {
+			var nameVer, desc string
+			if strings.Contains(line, " : ") {
+				parts := strings.SplitN(line, " : ", 2)
+				nameVer = strings.TrimSpace(parts[0])
 				desc = strings.TrimSpace(parts[1])
+			} else if strings.Contains(line, " - ") {
+				parts := strings.SplitN(line, " - ", 2)
+				nameVer = strings.TrimSpace(parts[0])
+				desc = strings.TrimSpace(parts[1])
+			} else {
+				nameVer = line
 			}
 			nameParts := strings.Fields(nameVer)
 			if len(nameParts) > 0 {
@@ -107,12 +164,21 @@ func (rp *RepositoryProvider) parseSearchResults(output string, query string) []
 					Name:        nameParts[0],
 					Description: desc,
 					Provider:    "repository",
-					Source:      "repository",
+					Source:      rp.pm,
+					Repo:        rp.pm,
 				})
 			}
 		}
 	}
 	return pkgs
+}
+
+func runPrivilegedPM(ctx context.Context, bin string, args ...string) utils.ExecResult {
+	if os.Geteuid() == 0 || bin == "paru" || bin == "yay" {
+		return utils.RunCommand(ctx, bin, args...)
+	}
+	sudoArgs := append([]string{bin}, args...)
+	return utils.RunCommand(ctx, "sudo", sudoArgs...)
 }
 
 func (rp *RepositoryProvider) Install(ctx context.Context, pkg models.Package) (models.Result, error) {
@@ -122,6 +188,7 @@ func (rp *RepositoryProvider) Install(ctx context.Context, pkg models.Package) (
 	}
 
 	var installCmd string
+	bin := rp.pm
 	var args []string
 
 	switch rp.pm {
@@ -132,6 +199,7 @@ func (rp *RepositoryProvider) Install(ctx context.Context, pkg models.Package) (
 		installCmd = fmt.Sprintf("sudo pacman -S --noconfirm %s", pkg.Name)
 		args = []string{"-S", "--noconfirm", pkg.Name}
 	case "apt":
+		bin = "apt-get"
 		installCmd = fmt.Sprintf("sudo apt-get install -y %s", pkg.Name)
 		args = []string{"install", "-y", pkg.Name}
 	case "dnf":
@@ -142,7 +210,7 @@ func (rp *RepositoryProvider) Install(ctx context.Context, pkg models.Package) (
 		args = []string{"install", "-n", pkg.Name}
 	}
 
-	execRes := utils.RunCommand(ctx, rp.pm, args...)
+	execRes := runPrivilegedPM(ctx, bin, args...)
 	endTime := time.Now()
 	duration := endTime.Sub(start).Milliseconds()
 
@@ -171,6 +239,7 @@ func (rp *RepositoryProvider) Install(ctx context.Context, pkg models.Package) (
 func (rp *RepositoryProvider) Remove(ctx context.Context, pkg models.Package) (models.Result, error) {
 	start := time.Now()
 	var removeCmd string
+	bin := rp.pm
 	var args []string
 
 	switch rp.pm {
@@ -181,6 +250,7 @@ func (rp *RepositoryProvider) Remove(ctx context.Context, pkg models.Package) (m
 		removeCmd = fmt.Sprintf("sudo pacman -R --noconfirm %s", pkg.Name)
 		args = []string{"-R", "--noconfirm", pkg.Name}
 	case "apt":
+		bin = "apt-get"
 		removeCmd = fmt.Sprintf("sudo apt-get remove -y %s", pkg.Name)
 		args = []string{"remove", "-y", pkg.Name}
 	case "dnf":
@@ -191,7 +261,7 @@ func (rp *RepositoryProvider) Remove(ctx context.Context, pkg models.Package) (m
 		args = []string{"remove", "-n", pkg.Name}
 	}
 
-	execRes := utils.RunCommand(ctx, rp.pm, args...)
+	execRes := runPrivilegedPM(ctx, bin, args...)
 	endTime := time.Now()
 
 	return models.Result{
@@ -205,6 +275,58 @@ func (rp *RepositoryProvider) Remove(ctx context.Context, pkg models.Package) (m
 		Error:      execRes.Stderr,
 		InstallCmd: removeCmd,
 	}, nil
+}
+
+// UpdatePackage upgrades an individual package on APT, DNF, or Zypper.
+// Arch Linux (pacman/paru) intentionally forbids partial upgrades and requires full Update().
+func (rp *RepositoryProvider) UpdatePackage(ctx context.Context, pkg models.Package) (models.Result, error) {
+	start := time.Now()
+	switch rp.pm {
+	case "apt":
+		res := runPrivilegedPM(ctx, "apt-get", "install", "--only-upgrade", "-y", pkg.Name)
+		end := time.Now()
+		return models.Result{
+			Package:    pkg.Name,
+			Provider:   "apt",
+			Success:    res.ExitCode == 0,
+			StartTime:  start,
+			EndTime:    end,
+			DurationMs: end.Sub(start).Milliseconds(),
+			Output:     res.Stdout,
+			Error:      res.Stderr,
+			InstallCmd: fmt.Sprintf("sudo apt-get install --only-upgrade -y %s", pkg.Name),
+		}, res.Error
+	case "dnf":
+		res := runPrivilegedPM(ctx, "dnf", "upgrade", "-y", pkg.Name)
+		end := time.Now()
+		return models.Result{
+			Package:    pkg.Name,
+			Provider:   "dnf",
+			Success:    res.ExitCode == 0,
+			StartTime:  start,
+			EndTime:    end,
+			DurationMs: end.Sub(start).Milliseconds(),
+			Output:     res.Stdout,
+			Error:      res.Stderr,
+			InstallCmd: fmt.Sprintf("sudo dnf upgrade -y %s", pkg.Name),
+		}, res.Error
+	case "zypper":
+		res := runPrivilegedPM(ctx, "zypper", "update", "-n", pkg.Name)
+		end := time.Now()
+		return models.Result{
+			Package:    pkg.Name,
+			Provider:   "zypper",
+			Success:    res.ExitCode == 0,
+			StartTime:  start,
+			EndTime:    end,
+			DurationMs: end.Sub(start).Milliseconds(),
+			Output:     res.Stdout,
+			Error:      res.Stderr,
+			InstallCmd: fmt.Sprintf("sudo zypper update -n %s", pkg.Name),
+		}, res.Error
+	default:
+		return rp.Update(ctx)
+	}
 }
 
 func (rp *RepositoryProvider) Update(ctx context.Context) (models.Result, error) {
@@ -298,10 +420,25 @@ func (rp *RepositoryProvider) Info(ctx context.Context, pkgName string) (models.
 				info.Repo = val
 			case "depends on", "depends", "requires":
 				if val != "" && strings.ToLower(val) != "none" {
-					for _, rawDep := range strings.Fields(val) {
-						clean := strings.Trim(rawDep, ",()")
-						if clean != "" && clean != "None" && !strings.HasPrefix(clean, ">=") && !strings.HasPrefix(clean, "=") && !strings.HasPrefix(clean, "<=") {
-							info.Dependencies = append(info.Dependencies, clean)
+					if strings.Contains(val, ",") {
+						for _, seg := range strings.Split(val, ",") {
+							if idx := strings.Index(seg, "("); idx >= 0 {
+								seg = seg[:idx]
+							}
+							clean := strings.TrimSpace(seg)
+							if idx := strings.Index(clean, "|"); idx >= 0 {
+								clean = strings.TrimSpace(clean[:idx])
+							}
+							if clean != "" && clean != "None" {
+								info.Dependencies = append(info.Dependencies, clean)
+							}
+						}
+					} else {
+						for _, rawDep := range strings.Fields(val) {
+							clean := strings.Trim(rawDep, ",()")
+							if clean != "" && clean != "None" && !strings.HasPrefix(clean, ">=") && !strings.HasPrefix(clean, "=") && !strings.HasPrefix(clean, "<=") {
+								info.Dependencies = append(info.Dependencies, clean)
+							}
 						}
 					}
 				}

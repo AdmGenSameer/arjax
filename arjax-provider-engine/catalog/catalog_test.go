@@ -475,6 +475,43 @@ func TestProviderCapabilityMatrix(t *testing.T) {
 	}
 }
 
+func TestDebianKaliProviderNotRelabeledAsPacman(t *testing.T) {
+	d := NewDeduplicator()
+	pkgs := []models.Package{
+		{
+			Name:        "nmap",
+			Version:     "7.95+dfsg-2kali1",
+			Arch:        "amd64",
+			Description: "The Network Mapper",
+			Provider:    "repository",
+			Source:      "apt",
+			Repo:        "kali-rolling",
+		},
+	}
+
+	apps := d.GroupAndDeduplicate(pkgs, nil, map[string]string{})
+	if len(apps) != 1 {
+		t.Fatalf("Expected 1 unified app for apt package, got %d", len(apps))
+	}
+	app := apps[0]
+	if len(app.Offers) != 1 {
+		t.Fatalf("Expected 1 offer, got %d", len(app.Offers))
+	}
+	offer := app.Offers[0]
+	if offer.Provider != "apt" {
+		t.Fatalf("Expected offer provider 'apt' on Kali/Debian, got %q", offer.Provider)
+	}
+	if offer.CommandPreview != "sudo apt install nmap" {
+		t.Errorf("Expected apt install command preview, got %q", offer.CommandPreview)
+	}
+	if offer.Trust.TrustLevel != TrustOfficial {
+		t.Errorf("Expected kali-rolling apt repo to be TrustOfficial, got %+v", offer.Trust)
+	}
+	if !strings.Contains(app.Homepage, "packages.debian.org") {
+		t.Errorf("Expected Debian/APT homepage URL rather than archlinux.org, got %q", app.Homepage)
+	}
+}
+
 func FuzzCompareVersions(f *testing.F) {
 	f.Add("pacman", "1:2.0.1-1", "1:2.0.1-2")
 	f.Add("deb", "1.0~rc1-1", "1.0-1")

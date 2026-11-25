@@ -87,6 +87,7 @@ func DefaultCapabilityMatrix() map[string]ProviderCapability {
 	hasSnap := utils.CommandExists("snap")
 	hasApt := utils.CommandExists("apt")
 	hasDnf := utils.CommandExists("dnf")
+	hasZypper := utils.CommandExists("zypper")
 
 	pacmanCap := ProviderCapability{
 		Provider:           "pacman",
@@ -163,31 +164,55 @@ func DefaultCapabilityMatrix() map[string]ProviderCapability {
 	rpmCap := ProviderCapability{
 		Provider:           "rpm",
 		DisplayName:        "DNF / RPM",
-		Search:             SupportPartial,
-		Install:            SupportPartial,
-		Remove:             SupportPartial,
-		Update:             SupportPlanned,
-		InstalledDetection: SupportPlanned,
-		DependencyPreview:  SupportPlanned,
+		Search:             SupportFull,
+		Install:            SupportFull,
+		Remove:             SupportFull,
+		Update:             SupportFull,
+		InstalledDetection: SupportFull,
+		DependencyPreview:  SupportPartial,
 		LockDetection:      true,
 		OfficialDistro:     hasDnf,
 		AvailableOnHost:    hasDnf,
-		StatusNote:         "Partial dnf support; full RPM transaction & update hooks planned",
+		StatusNote:         "Fedora / RHEL official DNF & RPM repositories",
+	}
+	if !hasDnf {
+		rpmCap.StatusNote = "Supported by Arjax, but dnf is not installed on this host"
 	}
 
 	debCap := ProviderCapability{
 		Provider:           "deb",
 		DisplayName:        "APT / DEB",
-		Search:             SupportPartial,
-		Install:            SupportPartial,
-		Remove:             SupportPartial,
-		Update:             SupportPlanned,
-		InstalledDetection: SupportPlanned,
-		DependencyPreview:  SupportPlanned,
+		Search:             SupportFull,
+		Install:            SupportFull,
+		Remove:             SupportFull,
+		Update:             SupportFull,
+		InstalledDetection: SupportFull,
+		DependencyPreview:  SupportPartial,
 		LockDetection:      true,
 		OfficialDistro:     hasApt,
 		AvailableOnHost:    hasApt,
-		StatusNote:         "Partial apt support; full DEB transaction & update hooks planned",
+		StatusNote:         "Debian / Ubuntu / Kali APT & dpkg repositories",
+	}
+	if !hasApt {
+		debCap.StatusNote = "Supported by Arjax, but apt is not installed on this host"
+	}
+
+	zypperCap := ProviderCapability{
+		Provider:           "zypper",
+		DisplayName:        "Zypper (openSUSE)",
+		Search:             SupportFull,
+		Install:            SupportFull,
+		Remove:             SupportFull,
+		Update:             SupportFull,
+		InstalledDetection: SupportFull,
+		DependencyPreview:  SupportPartial,
+		LockDetection:      true,
+		OfficialDistro:     hasZypper,
+		AvailableOnHost:    hasZypper,
+		StatusNote:         "openSUSE / SLES official Zypper repositories",
+	}
+	if !hasZypper {
+		zypperCap.StatusNote = "Supported by Arjax, but zypper is not installed on this host"
 	}
 
 	appimageCap := ProviderCapability{
@@ -223,10 +248,11 @@ func DefaultCapabilityMatrix() map[string]ProviderCapability {
 	return map[string]ProviderCapability{
 		"pacman":   pacmanCap,
 		"aur":      aurCap,
+		"deb":      debCap,
+		"rpm":      rpmCap,
+		"zypper":   zypperCap,
 		"flatpak":  flatpakCap,
 		"snap":     snapCap,
-		"rpm":      rpmCap,
-		"deb":      debCap,
 		"appimage": appimageCap,
 		"github":   githubCap,
 	}
@@ -318,6 +344,44 @@ func ProbeProviderStatuses(ctx context.Context, matrix map[string]ProviderCapabi
 				}
 			}
 
+		case "deb":
+			st.Installed = utils.CommandExists("apt") && utils.CommandExists("dpkg-query")
+			if !st.Installed {
+				st.StatusMessage = "APT/DEB supported, but apt is not installed on this distribution"
+			} else {
+				st.Available = true
+				st.Healthy = true
+				st.StatusMessage = "Healthy · APT/DEB repositories accessible"
+			}
+
+		case "rpm":
+			st.Installed = utils.CommandExists("dnf") && utils.CommandExists("rpm")
+			if !st.Installed {
+				st.StatusMessage = "DNF/RPM supported, but dnf is not installed on this distribution"
+			} else if _, err := os.Stat("/var/run/dnf.pid"); err == nil {
+				st.Available = true
+				st.Healthy = false
+				st.StatusMessage = "DNF available, but transaction lock (/var/run/dnf.pid) is active"
+			} else {
+				st.Available = true
+				st.Healthy = true
+				st.StatusMessage = "Healthy · DNF/RPM repositories accessible"
+			}
+
+		case "zypper":
+			st.Installed = utils.CommandExists("zypper")
+			if !st.Installed {
+				st.StatusMessage = "Zypper supported, but zypper is not installed on this distribution"
+			} else if _, err := os.Stat("/var/run/zypp.pid"); err == nil {
+				st.Available = true
+				st.Healthy = false
+				st.StatusMessage = "Zypper available, but lock (/var/run/zypp.pid) is active"
+			} else {
+				st.Available = true
+				st.Healthy = true
+				st.StatusMessage = "Healthy · Zypper repositories accessible"
+			}
+
 		default:
 			st.Installed = capInfo.AvailableOnHost
 			st.Available = capInfo.AvailableOnHost && st.Supported
@@ -333,7 +397,7 @@ func ProbeProviderStatuses(ctx context.Context, matrix map[string]ProviderCapabi
 
 // GetCapabilitiesOrdered returns all tracked provider capabilities in deterministic priority order.
 func GetCapabilitiesOrdered(matrix map[string]ProviderCapability) []ProviderCapability {
-	order := []string{"pacman", "aur", "flatpak", "snap", "deb", "rpm", "appimage", "github"}
+	order := []string{"pacman", "aur", "deb", "rpm", "zypper", "flatpak", "snap", "appimage", "github"}
 	out := make([]ProviderCapability, 0, len(order))
 	for _, k := range order {
 		if c, ok := matrix[k]; ok {

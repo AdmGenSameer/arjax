@@ -398,3 +398,269 @@ func pickDisplayName(preferred, fallback string) string {
 	}
 	return fallback
 }
+
+// AptUpdateProvider discovers pending Debian / Ubuntu / Kali updates via `apt list --upgradable`.
+type AptUpdateProvider struct {
+	txMgr  *transaction.Manager
+	runner CommandRunner
+}
+
+func NewAptUpdateProvider(txMgr *transaction.Manager) *AptUpdateProvider {
+	return &AptUpdateProvider{txMgr: txMgr, runner: utils.RunCommand}
+}
+
+func NewAptUpdateProviderWithRunner(txMgr *transaction.Manager, runner CommandRunner) *AptUpdateProvider {
+	if runner == nil {
+		runner = utils.RunCommand
+	}
+	return &AptUpdateProvider{txMgr: txMgr, runner: runner}
+}
+
+func (a *AptUpdateProvider) Name() string { return "apt" }
+
+func (a *AptUpdateProvider) CheckUpdates(ctx context.Context) ([]AvailableUpdate, error) {
+	if a.runner == nil {
+		a.runner = utils.RunCommand
+	}
+	if !utils.CommandExists("apt") && fmt.Sprintf("%p", a.runner) == fmt.Sprintf("%p", utils.RunCommand) {
+		return nil, fmt.Errorf("apt not installed on host")
+	}
+	res := a.runner(ctx, "apt", "list", "--upgradable")
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("apt list --upgradable failed (exit %d): %s", res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+	return ParseAptUpdatesOutput(res.Stdout), nil
+}
+
+// ParseAptUpdatesOutput parses `pkg/suite newver arch [upgradable from: oldver]`.
+func ParseAptUpdatesOutput(output string) []AvailableUpdate {
+	resolver := identity.NewResolver(identity.GetDefaultRegistry())
+	var out []AvailableUpdate
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "Listing...") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !strings.Contains(fields[0], "/") {
+			continue
+		}
+		slashIdx := strings.Index(fields[0], "/")
+		name := fields[0][:slashIdx]
+		suite := strings.SplitN(fields[0][slashIdx+1:], ",", 2)[0]
+		if suite == "" {
+			suite = "main"
+		}
+		newVer := fields[1]
+		oldVer := "installed"
+		if idx := strings.Index(line, "[upgradable from:"); idx >= 0 {
+			rest := strings.TrimSpace(line[idx+len("[upgradable from:"):])
+			oldVer = strings.TrimSuffix(rest, "]")
+			oldVer = strings.TrimSpace(oldVer)
+		}
+		res := resolver.Resolve(name, "apt")
+		out = append(out, AvailableUpdate{
+			OfferID:            fmt.Sprintf("apt:%s:%s", strings.ToLower(suite), strings.ToLower(name)),
+			AppID:              res.CanonicalID,
+			PackageName:        name,
+			DisplayName:        pickDisplayName(res.DisplayName, name),
+			Provider:           "apt",
+			Repository:         suite,
+			InstallScope:       "system",
+			InstalledVersion:   oldVer,
+			AvailableVersion:   newVer,
+			DownloadSize:       "~20 MB",
+			IsSecurity:         isSecuritySensitivePkg(name),
+			PartialUpgradeSafe: true,
+			UpgradeGroupPolicy: "apt_upgrade",
+			TrustLevel:         "official",
+			Summary:            fmt.Sprintf("APT upgrade (%s)", suite),
+		})
+	}
+	return out
+}
+
+func (a *AptUpdateProvider) Update(ctx context.Context, offerID string) error {
+	if a.txMgr == nil {
+		return fmt.Errorf("transaction manager unavailable")
+	}
+	_, err := a.txMgr.ExecuteOfferTransaction(ctx, offerID, transaction.OpUpdate, nil)
+	return err
+}
+
+// DnfUpdateProvider discovers pending Fedora / RHEL updates via `dnf check-update -q`.
+// Per dnf(8): exit code 100 = updates available, 0 = none available, anything else = error.
+type DnfUpdateProvider struct {
+	txMgr  *transaction.Manager
+	runner CommandRunner
+}
+
+func NewDnfUpdateProvider(txMgr *transaction.Manager) *DnfUpdateProvider {
+	return &DnfUpdateProvider{txMgr: txMgr, runner: utils.RunCommand}
+}
+
+func NewDnfUpdateProviderWithRunner(txMgr *transaction.Manager, runner CommandRunner) *DnfUpdateProvider {
+	if runner == nil {
+		runner = utils.RunCommand
+	}
+	return &DnfUpdateProvider{txMgr: txMgr, runner: runner}
+}
+
+func (d *DnfUpdateProvider) Name() string { return "dnf" }
+
+func (d *DnfUpdateProvider) CheckUpdates(ctx context.Context) ([]AvailableUpdate, error) {
+	if d.runner == nil {
+		d.runner = utils.RunCommand
+	}
+	if !utils.CommandExists("dnf") && fmt.Sprintf("%p", d.runner) == fmt.Sprintf("%p", utils.RunCommand) {
+		return nil, fmt.Errorf("dnf not installed on host")
+	}
+	res := d.runner(ctx, "dnf", "check-update", "-q")
+	switch res.ExitCode {
+	case 0:
+		return []AvailableUpdate{}, nil
+	case 100:
+		return ParseDnfUpdatesOutput(res.Stdout), nil
+	default:
+		return nil, fmt.Errorf("dnf check-update failed (exit %d): %s", res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+}
+
+// ParseDnfUpdatesOutput parses `pkg.arch   newver   repo` lines.
+func ParseDnfUpdatesOutput(output string) []AvailableUpdate {
+	resolver := identity.NewResolver(identity.GetDefaultRegistry())
+	var out []AvailableUpdate
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "Obsoleting") || strings.HasPrefix(line, "Security:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		nameArch := fields[0]
+		name := nameArch
+		if dotIdx := strings.LastIndex(nameArch, "."); dotIdx > 0 {
+			name = nameArch[:dotIdx]
+		}
+		newVer := fields[1]
+		repo := fields[2]
+		res := resolver.Resolve(name, "dnf")
+		out = append(out, AvailableUpdate{
+			OfferID:            fmt.Sprintf("dnf:%s:%s", strings.ToLower(repo), strings.ToLower(name)),
+			AppID:              res.CanonicalID,
+			PackageName:        name,
+			DisplayName:        pickDisplayName(res.DisplayName, name),
+			Provider:           "dnf",
+			Repository:         repo,
+			InstallScope:       "system",
+			InstalledVersion:   "installed",
+			AvailableVersion:   newVer,
+			DownloadSize:       "~22 MB",
+			IsSecurity:         isSecuritySensitivePkg(name),
+			PartialUpgradeSafe: true,
+			UpgradeGroupPolicy: "dnf_upgrade",
+			TrustLevel:         "official",
+			Summary:            fmt.Sprintf("DNF upgrade (%s)", repo),
+		})
+	}
+	return out
+}
+
+func (d *DnfUpdateProvider) Update(ctx context.Context, offerID string) error {
+	if d.txMgr == nil {
+		return fmt.Errorf("transaction manager unavailable")
+	}
+	_, err := d.txMgr.ExecuteOfferTransaction(ctx, offerID, transaction.OpUpdate, nil)
+	return err
+}
+
+// ZypperUpdateProvider discovers pending openSUSE updates via `zypper --non-interactive list-updates`.
+type ZypperUpdateProvider struct {
+	txMgr  *transaction.Manager
+	runner CommandRunner
+}
+
+func NewZypperUpdateProvider(txMgr *transaction.Manager) *ZypperUpdateProvider {
+	return &ZypperUpdateProvider{txMgr: txMgr, runner: utils.RunCommand}
+}
+
+func NewZypperUpdateProviderWithRunner(txMgr *transaction.Manager, runner CommandRunner) *ZypperUpdateProvider {
+	if runner == nil {
+		runner = utils.RunCommand
+	}
+	return &ZypperUpdateProvider{txMgr: txMgr, runner: runner}
+}
+
+func (z *ZypperUpdateProvider) Name() string { return "zypper" }
+
+func (z *ZypperUpdateProvider) CheckUpdates(ctx context.Context) ([]AvailableUpdate, error) {
+	if z.runner == nil {
+		z.runner = utils.RunCommand
+	}
+	if !utils.CommandExists("zypper") && fmt.Sprintf("%p", z.runner) == fmt.Sprintf("%p", utils.RunCommand) {
+		return nil, fmt.Errorf("zypper not installed on host")
+	}
+	res := z.runner(ctx, "zypper", "--non-interactive", "list-updates")
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("zypper list-updates failed (exit %d): %s", res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+	return ParseZypperUpdatesOutput(res.Stdout), nil
+}
+
+// ParseZypperUpdatesOutput parses table rows `v | Repo | Name | Current Version | Available Version | Arch`.
+func ParseZypperUpdatesOutput(output string) []AvailableUpdate {
+	resolver := identity.NewResolver(identity.GetDefaultRegistry())
+	var out []AvailableUpdate
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.Contains(line, "|") || strings.HasPrefix(line, "S ") || strings.HasPrefix(line, "--") {
+			continue
+		}
+		cols := strings.Split(line, "|")
+		if len(cols) < 5 {
+			continue
+		}
+		repo := strings.TrimSpace(cols[1])
+		name := strings.TrimSpace(cols[2])
+		oldVer := strings.TrimSpace(cols[3])
+		newVer := strings.TrimSpace(cols[4])
+		if name == "" || strings.EqualFold(name, "Name") {
+			continue
+		}
+		if repo == "" {
+			repo = "oss"
+		}
+		res := resolver.Resolve(name, "zypper")
+		out = append(out, AvailableUpdate{
+			OfferID:            fmt.Sprintf("zypper:%s:%s", strings.ToLower(repo), strings.ToLower(name)),
+			AppID:              res.CanonicalID,
+			PackageName:        name,
+			DisplayName:        pickDisplayName(res.DisplayName, name),
+			Provider:           "zypper",
+			Repository:         repo,
+			InstallScope:       "system",
+			InstalledVersion:   oldVer,
+			AvailableVersion:   newVer,
+			DownloadSize:       "~22 MB",
+			IsSecurity:         isSecuritySensitivePkg(name),
+			PartialUpgradeSafe: true,
+			UpgradeGroupPolicy: "zypper_upgrade",
+			TrustLevel:         "official",
+			Summary:            fmt.Sprintf("Zypper upgrade (%s)", repo),
+		})
+	}
+	return out
+}
+
+func (z *ZypperUpdateProvider) Update(ctx context.Context, offerID string) error {
+	if z.txMgr == nil {
+		return fmt.Errorf("transaction manager unavailable")
+	}
+	_, err := z.txMgr.ExecuteOfferTransaction(ctx, offerID, transaction.OpUpdate, nil)
+	return err
+}

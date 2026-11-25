@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/catalog/transaction"
+	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
 )
 
 const (
@@ -31,11 +32,24 @@ type Manager struct {
 func NewManager(txMgr *transaction.Manager, customProviders ...UpdateProvider) *Manager {
 	provs := customProviders
 	if len(provs) == 0 {
-		provs = []UpdateProvider{
-			NewPacmanUpdateProvider(txMgr),
-			NewFlatpakUpdateProvider(txMgr),
-			NewAURUpdateProvider(txMgr),
-			NewSnapUpdateProvider(txMgr),
+		switch utils.DetectPackageManager() {
+		case "apt":
+			provs = []UpdateProvider{NewAptUpdateProvider(txMgr)}
+		case "dnf":
+			provs = []UpdateProvider{NewDnfUpdateProvider(txMgr)}
+		case "zypper":
+			provs = []UpdateProvider{NewZypperUpdateProvider(txMgr)}
+		default:
+			provs = []UpdateProvider{
+				NewPacmanUpdateProvider(txMgr),
+				NewAURUpdateProvider(txMgr),
+			}
+		}
+		if utils.CommandExists("flatpak") {
+			provs = append(provs, NewFlatpakUpdateProvider(txMgr))
+		}
+		if utils.CommandExists("snap") {
+			provs = append(provs, NewSnapUpdateProvider(txMgr))
 		}
 	}
 	return &Manager{
@@ -300,7 +314,7 @@ func (m *Manager) UpdateSelected(ctx context.Context, offerIDs []string, onProgr
 	res := UpdateBatchResult{
 		TotalRequested: len(offerIDs),
 		Results:        make([]UpdateItemOutcome, 0, len(offerIDs)),
-		Note:           "Enforces Arch Pacman-before-AUR ordering, full pacman -Syu upgrades, pre-execution revalidation, and Flatpak scope isolation.",
+		Note:           "Enforces distro-appropriate upgrade safety, pre-execution revalidation, and Flatpak scope isolation.",
 	}
 
 	provs := m.providerMap()

@@ -62,8 +62,28 @@ func (pm *ProviderManager) GetCapabilityMatrix() map[string]ProviderCapability {
 	// Cross-check dynamically registered mock/custom providers so test harnesses reflect availability
 	for _, p := range pm.providers {
 		n := strings.ToLower(p.Name())
-		if n == "repository" {
-			n = "pacman"
+		if rp, ok := p.(interface{ PackageManager() string }); ok {
+			switch strings.ToLower(rp.PackageManager()) {
+			case "apt":
+				n = "deb"
+			case "dnf":
+				n = "rpm"
+			case "zypper":
+				n = "zypper"
+			default:
+				n = "pacman"
+			}
+		} else if n == "repository" {
+			switch utils.DetectPackageManager() {
+			case "apt":
+				n = "deb"
+			case "dnf":
+				n = "rpm"
+			case "zypper":
+				n = "zypper"
+			default:
+				n = "pacman"
+			}
 		}
 		if existing, ok := matrix[n]; ok {
 			existing.AvailableOnHost = p.IsSupported()

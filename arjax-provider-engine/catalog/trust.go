@@ -56,9 +56,25 @@ func EvaluateSourceTrust(provider, repo, pkgName string) SourceTrust {
 	case "pacman", "apt", "dnf", "zypper", "deb", "rpm", "repository":
 		repoLabel := r
 		if repoLabel == "" {
-			repoLabel = "extra"
+			if prov == "apt" || prov == "deb" {
+				repoLabel = "main"
+			} else {
+				repoLabel = "extra"
+			}
 		}
-		if r == "" || r == "core" || r == "extra" || r == "multilib" || r == "main" || r == "fedora" || r == "updates" || r == "repository" {
+		signingKey := "Local pacman-key / distro master keyring"
+		if prov == "apt" || prov == "deb" {
+			signingKey = "Local apt-key / distribution GPG keyring"
+		} else if prov == "dnf" || prov == "rpm" {
+			signingKey = "Local RPM / distribution GPG keyring"
+		} else if prov == "zypper" {
+			signingKey = "Local Zypper / RPM GPG keyring"
+		}
+		isOfficialRepo := r == "" || r == prov || r == "core" || r == "extra" || r == "multilib" ||
+			r == "main" || r == "contrib" || r == "non-free" || r == "non-free-firmware" ||
+			r == "kali-rolling" || r == "stable" || r == "testing" || r == "unstable" ||
+			r == "fedora" || r == "updates" || r == "oss" || r == "repository"
+		if isOfficialRepo {
 			return SourceTrust{
 				TrustLevel:       TrustOfficial,
 				OfficialRepo:     true,
@@ -70,8 +86,8 @@ func EvaluateSourceTrust(provider, repo, pkgName string) SourceTrust {
 				Summary:          "Cryptographically signed official distribution repository package.",
 				Provenance: PackageProvenance{
 					Origin:         fmt.Sprintf("distro-repo/%s", repoLabel),
-					Publisher:      "Official Arch Linux / Distro Packaging Team",
-					SigningKey:     "Local pacman-key / distro master keyring",
+					Publisher:      "Official Distro Packaging Team",
+					SigningKey:     signingKey,
 					ArtifactDigest: "repo-sync-db-sha256",
 					Verification:   "Package archive and repo database signed by trusted distro packagers.",
 					VerifiedAt:     now,
