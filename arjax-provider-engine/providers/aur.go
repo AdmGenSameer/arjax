@@ -181,7 +181,11 @@ func (ap *AURProvider) Install(ctx context.Context, pkg models.Package) (models.
 }
 
 func (ap *AURProvider) Remove(ctx context.Context, pkg models.Package) (models.Result, error) {
-	rp := NewRepositoryProvider("pacman")
+	preferred := utils.DetectPackageManager()
+	if preferred == "" {
+		preferred = "pacman"
+	}
+	rp := NewRepositoryProvider(preferred)
 	return rp.Remove(ctx, pkg)
 }
 

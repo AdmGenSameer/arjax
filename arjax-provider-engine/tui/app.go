@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +20,48 @@ import (
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/providers"
 	"github.com/AdmGenSameer/archpkg-helper/arjax-provider-engine/utils"
 )
+
+type pendingAction struct {
+	action   string // "install", "remove", "remove_direct", "upgrade"
+	offer    catalog.PackageOffer
+	pkg      models.Package
+	offerIDs []string
+}
+
+type sudoAuthResultMsg struct {
+	pending pendingAction
+	err     error
+}
+
+func isInteractiveTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func isSudoAuthenticated() bool {
+	if os.Geteuid() == 0 {
+		return true
+	}
+	cmd := exec.Command("sudo", "-n", "true")
+	return cmd.Run() == nil
+}
+
+func needsSudo(provider, scope string) bool {
+	if os.Geteuid() == 0 || !isInteractiveTerminal() {
+		return false
+	}
+	p := strings.ToLower(provider)
+	if p == "pacman" || p == "repository" || p == "apt" || p == "dnf" || p == "zypper" || p == "system" {
+		return true
+	}
+	if scope == "system" {
+		return true
+	}
+	return false
+}
 
 type searchDoneMsg struct {
 	query       string
@@ -463,6 +507,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						app := apps[m.cursor]
 						offer := m.activeOfferForApp(app)
 						pkg := packageFromOffer(offer)
+						if needsSudo(pkg.Provider, pkg.Scope) && !isSudoAuthenticated() {
+							pending := pendingAction{action: "install", offer: offer, pkg: pkg}
+							return m, tea.ExecProcess(exec.Command("sudo", "-v"), func(err error) tea.Msg {
+								return sudoAuthResultMsg{pending: pending, err: err}
+							})
+						}
 						m.startTransactionState("install", pkg)
 						return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runInstallOffer(offer, pkg))
 					}
@@ -473,6 +523,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Version:  upd.AvailableVersion,
 						Provider: upd.Provider,
 						Repo:     upd.Repository,
+						Scope:    upd.InstallScope,
+					}
+					if needsSudo(pkg.Provider, pkg.Scope) && !isSudoAuthenticated() {
+						pending := pendingAction{action: "upgrade", offerIDs: []string{upd.OfferID}, pkg: pkg}
+						return m, tea.ExecProcess(exec.Command("sudo", "-v"), func(err error) tea.Msg {
+							return sudoAuthResultMsg{pending: pending, err: err}
+						})
 					}
 					m.startTransactionState("install", pkg)
 					m.activeTab = 0
@@ -489,6 +546,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Name:     fmt.Sprintf("Full System Upgrade (%d updates)", len(allIDs)),
 						Version:  "Latest",
 						Provider: "all",
+						Scope:    "system",
+					}
+					if needsSudo(pkg.Provider, pkg.Scope) && !isSudoAuthenticated() {
+						pending := pendingAction{action: "upgrade", offerIDs: allIDs, pkg: pkg}
+						return m, tea.ExecProcess(exec.Command("sudo", "-v"), func(err error) tea.Msg {
+							return sudoAuthResultMsg{pending: pending, err: err}
+						})
 					}
 					m.startTransactionState("install", pkg)
 					m.activeTab = 0
@@ -505,12 +569,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						app := apps[m.cursor]
 						offer := m.activeOfferForApp(app)
 						pkg := packageFromOffer(offer)
+						if needsSudo(pkg.Provider, pkg.Scope) && !isSudoAuthenticated() {
+							pending := pendingAction{action: "remove", offer: offer, pkg: pkg}
+							return m, tea.ExecProcess(exec.Command("sudo", "-v"), func(err error) tea.Msg {
+								return sudoAuthResultMsg{pending: pending, err: err}
+							})
+						}
 						m.startTransactionState("remove", pkg)
 						return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runRemoveOffer(offer, pkg))
 					}
 				} else if m.activeTab == 1 && len(m.installedEntries) > 0 && m.installedCursor < len(m.installedEntries) {
 					entry := m.installedEntries[m.installedCursor]
 					pkg := offerFromInstalledEntry(entry)
+					if needsSudo(pkg.Provider, "") && !isSudoAuthenticated() {
+						pending := pendingAction{action: "remove_direct", pkg: pkg}
+						return m, tea.ExecProcess(exec.Command("sudo", "-v"), func(err error) tea.Msg {
+							return sudoAuthResultMsg{pending: pending, err: err}
+						})
+					}
 					m.startTransactionState("remove", pkg)
 					m.activeTab = 0
 					return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runRemove(pkg))
@@ -618,32 +694,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.telemetry = collectHostTelemetry(m.nativePM)
 		return m, tickTelemetry()
 
+	case sudoAuthResultMsg:
+		if msg.err != nil {
+			m.statusMsg = "✖ Sudo authentication cancelled or failed; operation aborted."
+			m.statusType = "error"
+			return m, nil
+		}
+		switch msg.pending.action {
+		case "install":
+			m.startTransactionState("install", msg.pending.pkg)
+			return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runInstallOffer(msg.pending.offer, msg.pending.pkg))
+		case "remove":
+			m.startTransactionState("remove", msg.pending.pkg)
+			return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runRemoveOffer(msg.pending.offer, msg.pending.pkg))
+		case "remove_direct":
+			m.startTransactionState("remove", msg.pending.pkg)
+			m.activeTab = 0
+			return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runRemove(msg.pending.pkg))
+		case "upgrade":
+			m.startTransactionState("install", msg.pending.pkg)
+			m.activeTab = 0
+			return m, tea.Batch(m.spinner.Tick, tickInstall(), m.runApplyUpdates(msg.pending.offerIDs))
+		}
+
 	case installTickMsg:
 		if m.installing {
 			prevStep := m.installStep
-			if m.installProgress < 0.92 {
+			// Cap progress at 0.78 while backend command actively executes
+			if m.installProgress < 0.78 {
 				delta := 0.02
 				if m.installProgress < 0.3 {
 					delta = 0.04
 				} else if m.installProgress < 0.6 {
 					delta = 0.025
-				} else if m.installProgress > 0.8 {
+				} else {
 					delta = 0.008
 				}
 				m.installProgress += delta
-				if m.installProgress > 0.92 {
-					m.installProgress = 0.92
+				if m.installProgress > 0.78 {
+					m.installProgress = 0.78
 				}
 			}
 
 			if m.installProgress < 0.25 {
 				m.installStep = 1
-			} else if m.installProgress < 0.50 {
+			} else if m.installProgress < 0.45 {
 				m.installStep = 2
-			} else if m.installProgress < 0.85 {
-				m.installStep = 3
 			} else {
-				m.installStep = 4
+				// While backend package manager executes, stay in Stage 3!
+				m.installStep = 3
 			}
 
 			if m.installStep != prevStep {
@@ -654,17 +753,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						stepDesc = "Step 2/4: Verifying dependency tree & host locks..."
 					case 3:
 						stepDesc = fmt.Sprintf("Step 3/4: Executing %s backend (download/compile)...", m.installPkg.Provider)
-					case 4:
-						stepDesc = "Step 4/4: Finalizing desktop shortcuts & symlinks..."
 					}
 				} else {
 					switch m.installStep {
 					case 2:
-						stepDesc = "Step 2/4: Checking reverse dependencies..."
+						stepDesc = "Step 2/4: Checking reverse dependencies & locks..."
 					case 3:
 						stepDesc = fmt.Sprintf("Step 3/4: Executing %s removal routine...", m.installPkg.Provider)
-					case 4:
-						stepDesc = "Step 4/4: Cleaning orphaned config & cache..."
 					}
 				}
 				if stepDesc != "" {
@@ -679,6 +774,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installing = false
 		m.installProgress = 1.0
 		m.installStep = 4
+		if m.installAction == "remove" {
+			m.logLines = append(m.logLines, fmt.Sprintf("[%s] Step 4/4: Package removed; refreshing catalog database...", time.Now().Format("15:04:05")))
+		} else {
+			m.logLines = append(m.logLines, fmt.Sprintf("[%s] Step 4/4: Finalizing desktop shortcuts & symlinks...", time.Now().Format("15:04:05")))
+		}
 		if msg.err != nil || !msg.result.Success {
 			errStr := msg.result.Error
 			if errStr == "" && msg.err != nil {

@@ -199,7 +199,8 @@ func runPrivilegedPM(ctx context.Context, bin string, args ...string) utils.Exec
 	if os.Geteuid() == 0 || bin == "paru" || bin == "yay" {
 		return utils.RunCommand(ctx, bin, args...)
 	}
-	sudoArgs := append([]string{bin}, args...)
+	// Use -n (non-interactive) to prevent sudo from hanging on /dev/tty in background execution
+	sudoArgs := append([]string{"-n", bin}, args...)
 	return utils.RunCommand(ctx, "sudo", sudoArgs...)
 }
 

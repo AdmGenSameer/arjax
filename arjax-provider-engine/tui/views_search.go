@@ -685,11 +685,11 @@ func (m Model) renderInstallPipelinePane(outerW, boxH, innerW int) string {
 	} else {
 		switch m.installStep {
 		case 2:
-			currentStatus = "Verifying reverse dependencies..."
+			currentStatus = "Verifying reverse dependencies & locks..."
 		case 3:
 			currentStatus = fmt.Sprintf("Running %s removal routine...", m.installPkg.Provider)
 		case 4:
-			currentStatus = "Cleaning orphaned files & desktop caches..."
+			currentStatus = "Finalizing removal & refreshing catalog database..."
 		}
 	}
 	b.WriteString(fmt.Sprintf("  %s %s\n\n", m.spinner.View(), lipgloss.NewStyle().Bold(true).Foreground(ColorHighlight).Render(currentStatus)))
@@ -703,10 +703,10 @@ func (m Model) renderInstallPipelinePane(outerW, boxH, innerW int) string {
 	}
 	if m.installAction == "remove" {
 		steps = []string{
-			"Package Binary Inspection",
-			"Reverse Dependency Check",
-			"Removal Execution",
-			"Orphan & Cache Cleanup",
+			"Target & Scope Validation",
+			"Dependency & Lock Verification",
+			"Package Manager Removal",
+			"Database & Catalog Finalization",
 		}
 	}
 	for idx, s := range steps {

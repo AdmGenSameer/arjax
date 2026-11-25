@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -436,3 +437,55 @@ func TestTUIDebounceSearchIgnoresStaleTokens(t *testing.T) {
 		t.Errorf("expected matching debounce seq to trigger background search")
 	}
 }
+
+func TestTUISudoAuthHandling(t *testing.T) {
+	m := setupTestModel()
+
+	// 1. Sudo auth cancellation should abort cleanly without crashing
+	res, cmd := m.Update(sudoAuthResultMsg{
+		pending: pendingAction{
+			action: "remove",
+			pkg:    models.Package{Name: "akonadi-calendar-tools", Provider: "pacman"},
+		},
+		err: fmt.Errorf("sudo auth cancelled by user"),
+	})
+	m = res.(Model)
+	if cmd != nil {
+		t.Errorf("expected no background commands when sudo auth fails")
+	}
+	if !strings.Contains(m.statusMsg, "cancelled or failed") {
+		t.Errorf("expected error status msg, got %s", m.statusMsg)
+	}
+	if m.installing {
+		t.Errorf("expected installing=false when auth fails")
+	}
+
+	// 2. Successful sudo auth should resume the transaction
+	res, cmd = m.Update(sudoAuthResultMsg{
+		pending: pendingAction{
+			action: "remove",
+			pkg:    models.Package{Name: "akonadi-calendar-tools", Provider: "pacman"},
+		},
+		err: nil,
+	})
+	m = res.(Model)
+	if cmd == nil {
+		t.Errorf("expected commands to start remove on successful auth")
+	}
+	if !m.installing {
+		t.Errorf("expected installing=true after successful sudo auth")
+	}
+	if m.installPkg.Name != "akonadi-calendar-tools" {
+		t.Errorf("expected installPkg akonadi-calendar-tools, got %s", m.installPkg.Name)
+	}
+
+	// Verify stages do NOT say "Orphan & Cache Cleanup"
+	view := m.View()
+	if strings.Contains(view, "Orphan & Cache Cleanup") {
+		t.Errorf("view must NOT contain misleading 'Orphan & Cache Cleanup' label")
+	}
+	if !strings.Contains(view, "Package Manager Removal") {
+		t.Errorf("expected view to contain 'Package Manager Removal'")
+	}
+}
+
